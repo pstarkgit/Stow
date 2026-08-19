@@ -60,23 +60,11 @@ struct StowApp: App {
         if args.contains("--seam") {
             MainActor.assumeIsolated { SpacerItem.runSeamAndExit() }
         }
-        if args.contains("--slots") {
-            MainActor.assumeIsolated { SlotMap.runSlotsAndExit() }
-        }
         if args.contains("--panel") {
             MainActor.assumeIsolated { StatusPanel.runPanelAndExit() }
         }
-        if args.contains("--drag") {
-            MainActor.assumeIsolated { HideController.runDragAndExit() }
-        }
-        if args.contains("--probecost") {
-            MainActor.assumeIsolated { SlotMap.runProbeCostAndExit() }
-        }
         if args.contains("--move") {
             MainActor.assumeIsolated { ItemMover.runMoveAndExit() }
-        }
-        if args.contains("--arrange") {
-            MainActor.assumeIsolated { BarArranger.runArrangeAndExit() }
         }
         if args.contains("--rows") {
             MainActor.assumeIsolated { BarSnapshot.runRowsAndExit() }
@@ -84,13 +72,6 @@ struct StowApp: App {
         if let i = args.firstIndex(of: "--open"), i + 1 < args.count {
             let needle = args[i + 1]
             MainActor.assumeIsolated { BarSnapshot.runOpenAndExit(matching: needle) }
-        }
-        if let i = args.firstIndex(of: "--cut"), i + 1 < args.count {
-            let needle = args[i + 1]
-            MainActor.assumeIsolated { HideController.runCutAndExit(matching: needle) }
-        }
-        if args.contains("--apply") {
-            MainActor.assumeIsolated { HideController.runApplyAndExit() }
         }
         if args.contains("--hide") {
             MainActor.assumeIsolated { SpacerItem.runHideAndExit() }
@@ -129,6 +110,7 @@ struct StowApp: App {
                 // the persisted zones rather than a bar scan, because a hidden item is not in a
                 // scan at all: it reports a large negative position and the owner walk drops it.
                 hiddenApps: hider.hiddenApps(from: store.config),
+                arrangementFailures: hider.lastArrangeFailures,
                 displayName: snapshot.displayName,
                 // THE action. Toggling the seams is what Stow is for, and it is wired to the
                 // panel's one primary control.

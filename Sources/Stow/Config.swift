@@ -26,6 +26,7 @@ import Foundation
 /// `Profile` stores spacer geometry and reveal behaviour, `Rule.Action` targets an
 /// ordinal position or a profile, and moving an item between zones remains later work.
 struct Config: Codable, Equatable, Sendable {
+    static let currentSchemaVersion = 1
 
     /// One saved arrangement: the spacer geometry and reveal behaviour to apply, plus,
     /// now that bundle id is a stable key (see this file's header comment), an
@@ -134,6 +135,9 @@ struct Config: Codable, Equatable, Sendable {
     }
 
     // MARK: - Fields
+
+    /// File-format version. Older files without this key are migrated in place.
+    var schemaVersion: Int? = Config.currentSchemaVersion
 
     /// Reveal a tucked item on hover, without needing the hotkey or a sub-bar
     /// click. `nil` means "not yet decided"; `revealOnHoverEnabled` resolves it.
@@ -321,8 +325,11 @@ struct Config: Codable, Equatable, Sendable {
         if !FileManager.default.fileExists(atPath: primary.path),
            let legacy,
            let data = try? Data(contentsOf: legacy),
-           let migrated = try? JSONDecoder().decode(Config.self, from: data) {
-            try? migrated.save(to: primary)
+           let migratedData = try? migratePreservingUnknownFields(data).data,
+           let migrated = try? JSONDecoder().decode(Config.self, from: migratedData) {
+            try? FileManager.default.createDirectory(
+                at: primary.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? migratedData.write(to: primary, options: .atomic)
             return migrated
         }
         return load(from: primary)
@@ -343,12 +350,16 @@ struct Config: Codable, Equatable, Sendable {
     static func load(from url: URL) -> Config {
         do {
             let data = try Data(contentsOf: url)
-            guard let cfg = try? JSONDecoder().decode(Config.self, from: data) else {
+            guard let migration = try? migratePreservingUnknownFields(data),
+                  let cfg = try? JSONDecoder().decode(Config.self, from: migration.data) else {
                 // Present but undecodable: a broken config file must never stop
                 // a menu bar app from launching, so fall back to defaults for
                 // THIS run without touching the file a future build might still
                 // be able to read.
                 return Config.default
+            }
+            if migration.didChange {
+                try? migration.data.write(to: url, options: .atomic)
             }
             return cfg
         } catch let error as NSError
@@ -373,9 +384,93 @@ struct Config: Codable, Equatable, Sendable {
     /// against its `Config`.
     func save(to url: URL) throws {
         let enc = JSONEncoder()
-        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let encoded = try enc.encode(self)
+        guard var updated = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        else { throw CocoaError(.fileWriteUnknown) }
+        updated["schemaVersion"] = Self.currentSchemaVersion
+
+        var merged = (try? Data(contentsOf: url))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        for key in Self.knownTopLevelKeys {
+            if let value = updated[key] {
+                merged[key] = Self.deepMerge(existing: merged[key], update: value)
+            } else {
+                merged.removeValue(forKey: key)
+            }
+        }
+        merged["schemaVersion"] = Self.currentSchemaVersion
+        let data = try JSONSerialization.data(
+            withJSONObject: merged, options: [.prettyPrinted, .sortedKeys])
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try enc.encode(self).write(to: url, options: .atomic)
+        try data.write(to: url, options: .atomic)
+    }
+
+    /// Rewrites legacy zone strings without decoding and re-encoding the document,
+    /// so keys this build does not understand survive byte-for-byte semantically.
+    static func migratePreservingUnknownFields(_ data: Data) throws
+        -> (data: Data, didChange: Bool) {
+        guard var root = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { throw CocoaError(.fileReadCorruptFile) }
+        var changed = false
+
+        if (root["schemaVersion"] as? Int) != currentSchemaVersion {
+            root["schemaVersion"] = currentSchemaVersion
+            changed = true
+        }
+        if var zones = root["zoneByBundleID"] as? [String: Any] {
+            for (bundleID, value) in zones where value as? String == "vaulted" {
+                zones[bundleID] = Zone.tucked.rawValue
+                changed = true
+            }
+            root["zoneByBundleID"] = zones
+        }
+        if var profiles = root["profiles"] as? [[String: Any]] {
+            for index in profiles.indices {
+                guard var zones = profiles[index]["appZones"] as? [String: Any] else { continue }
+                for (bundleID, value) in zones where value as? String == "vaulted" {
+                    zones[bundleID] = Zone.tucked.rawValue
+                    changed = true
+                }
+                profiles[index]["appZones"] = zones
+            }
+            root["profiles"] = profiles
+        }
+
+        guard changed else { return (data, false) }
+        return (try JSONSerialization.data(
+            withJSONObject: root, options: [.prettyPrinted, .sortedKeys]), true)
+    }
+
+    private static let knownTopLevelKeys: Set<String> = [
+        "schemaVersion", "revealOnHover", "autoTuckDelaySeconds", "launchAtLogin",
+        "spacerRestingLength", "spacerAutosaveName", "profiles", "activeProfileID",
+        "rules", "revealDurationSeconds", "zoneByBundleID",
+    ]
+
+    private static func deepMerge(existing: Any?, update: Any) -> Any {
+        if var existing = existing as? [String: Any],
+           let update = update as? [String: Any] {
+            for (key, value) in update {
+                existing[key] = deepMerge(existing: existing[key], update: value)
+            }
+            return existing
+        }
+        if let existing = existing as? [[String: Any]],
+           let update = update as? [[String: Any]] {
+            let pairs: [(String, [String: Any])] = existing.compactMap {
+                guard let id = $0["id"] as? String else { return nil }
+                return (id, $0)
+            }
+            let existingByID = Dictionary<String, [String: Any]>(
+                uniqueKeysWithValues: pairs)
+            let merged: [[String: Any]] = update.map { value in
+                guard let id = value["id"] as? String else { return value }
+                return deepMerge(existing: existingByID[id], update: value)
+                    as? [String: Any] ?? value
+            }
+            return merged
+        }
+        return update
     }
 }

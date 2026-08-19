@@ -13,6 +13,19 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.18
+
+- Show Everything now cancels every pending automatic re-tuck, so an old timer
+  cannot hide an app again after an emergency restore.
+- Launch arrangement failures now appear in the Stow panel with the affected app
+  and a recovery action.
+- Removed the old movable-boundary planner, placement-floor probe, slot map, and
+  their developer-only command modes. Stow now has one stationary boundary path.
+- Arrangement transactions now have deterministic tests for partial failure,
+  verification failure, reverse-order rollback, and rollback failure.
+- Configuration files now carry a schema version. Legacy `vaulted` values are
+  rewritten as `tucked` while fields from newer builds are preserved.
+
 ## 0.1.17
 
 - Stow now has exactly two runtime zones, On Bar and In Stow; old Deep Storage

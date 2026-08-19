@@ -11,6 +11,17 @@ enum Zone: String, CaseIterable, Sendable {
     case tucked
 }
 
+/// One app Stow can place on either side of its stationary boundary.
+///
+/// `homeX` is only for keeping the Arrange board in familiar menu-bar order.
+/// It is not a placement target; Stow moves the app itself and never searches
+/// for a seam slot.
+struct ManagedAppCandidate: Equatable, Sendable {
+    let bundleID: String
+    let homeX: CGFloat
+    let isPushable: Bool
+}
+
 extension Zone: Codable {
     init(from decoder: Decoder) throws {
         let value = try decoder.singleValueContainer().decode(String.self)

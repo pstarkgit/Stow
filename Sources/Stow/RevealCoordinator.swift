@@ -132,6 +132,22 @@ final class RevealCoordinator: ObservableObject {
 
     private init() {}
 
+    /// Cancels every automatic move Stow scheduled for a temporarily revealed app.
+    ///
+    /// Show Everything is an emergency boundary: once the user asks for the full bar,
+    /// no timer or retry from an earlier reveal may move an icon again behind their back.
+    func cancelPendingRetucks() {
+        retuckTimer?.cancel()
+        retuckTimer = nil
+        retryTimer?.cancel()
+        retryTimer = nil
+        revealedBundleID = nil
+        revealedWindow = nil
+        pendingRetuck.removeAll()
+        seamWindowLookup = nil
+        Self.log("cancelled all pending retucks")
+    }
+
     /// Where the re-tuck timer runs.
     ///
     /// A background queue, not `DispatchQueue.main`, because the whole point of this

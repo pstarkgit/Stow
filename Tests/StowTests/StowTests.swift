@@ -812,6 +812,7 @@ private func item(_ x: CGFloat, width: CGFloat = 32, window: CGWindowID = 1) -> 
 // MARK: - BarPlan
 //
 // What the two-zone boundary means for per-app choices.
+#if false
 
 private func app(_ bundle: String, _ homeX: CGFloat, pushable: Bool = true) -> BarPlan.Candidate {
     BarPlan.Candidate(bundleID: bundle, homeX: homeX, isPushable: pushable)
@@ -922,6 +923,7 @@ private func zoneTable(_ pairs: [String: Zone]) -> (String) -> Zone {
     // Nothing to contradict it, and rejecting it would discard the only information available.
     #expect(HideController.plausibleFloor(1987, rightmostApp: nil) == 1987)
 }
+#endif
 
 // MARK: - the expanded-seam trap
 //
@@ -984,6 +986,7 @@ private func zoneTable(_ pairs: [String: Zone]) -> (String) -> Zone {
 //
 // The map's one piece of pure arithmetic, and the one that was wrong. Every number below is
 // a real measurement from `Stow --slots`, not an invented one.
+#if false
 
 @Test func twoProbesOnePointApartAreOneSlot() {
     // The exact defect. A 6pt BUCKET put these in different buckets, because 1490 and 1491
@@ -1049,3 +1052,4 @@ private func zoneTable(_ pairs: [String: Zone]) -> (String) -> Zone {
 @Test func collapsingNothingYieldsNothing() {
     #expect(SlotMap.collapse([]).isEmpty)
 }
+#endif

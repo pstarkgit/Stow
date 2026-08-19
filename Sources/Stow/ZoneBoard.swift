@@ -29,13 +29,7 @@ struct ZoneBoard: View {
         let bundleID: String
         let name: String
         let icon: NSImage?
-        let widthPt: CGFloat?
         let isOnBarNow: Bool
-        /// Pinned, yet a seam will sweep it off anyway.
-        let isCollateral: Bool
-        /// Sits further left than macOS lets a seam be placed, so its zone cannot be
-        /// separated from its neighbours'.
-        let isBelowFloor: Bool
 
         var id: String { bundleID }
     }
@@ -174,11 +168,6 @@ private struct TileView: View {
                         .lineLimit(1)
                 }
             }
-            if let width = tile.widthPt {
-                Text("\(Int(width))")
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(StowTheme.inkMuted)
-            }
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 7)
@@ -192,34 +181,20 @@ private struct TileView: View {
     /// The one thing worth saying under the name, chosen by severity rather than stacked.
     /// Three captions on one tile would be noise; the worst one is the actionable one.
     private var caption: String? {
-        if tile.isBelowFloor { return "macOS limit" }
-        if tile.isCollateral { return "hidden anyway" }
         if !tile.isOnBarNow { return "off the bar" }
         return nil
     }
 
     private var captionTint: Color {
-        if tile.isBelowFloor { return StowTheme.inkSoft }
-        if tile.isCollateral { return StowTheme.orange }
         return StowTheme.inkMuted
     }
 
     private var borderTint: Color {
-        if tile.isCollateral { return StowTheme.orange.opacity(0.55) }
         return StowTheme.hairline
     }
 
     private var helpText: String {
-        if tile.isBelowFloor {
-            return "\(tile.name) sits further left than macOS lets Stow place a seam, so its"
-                + " zone cannot be separated from its neighbours'. Command-drag it to the"
-                + " right in the menu bar."
-        }
-        if tile.isCollateral {
-            return "\(tile.name) is set to stay, but sits left of a seam your other choices"
-                + " need, so it will be hidden anyway. Command-drag it right of that seam."
-        }
-        return tile.name
+        tile.isOnBarNow ? tile.name : "\(tile.name) is currently off the visible bar"
     }
 }
 

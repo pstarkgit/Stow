@@ -408,20 +408,11 @@ private struct ArrangeContentView: View {
     /// this pane resolves against ONE walk of every running application's
     /// `AXExtrasMenuBar` rather than re-walking it per row.
     @State private var owners: [BarItemOwners.Owner] = []
-    /// Where the seam sits, measured.
-    @State private var cutX: CGFloat?
-    /// True while a cut move is searching for a slot, so the pane can disable its
-    /// controls rather than queue several searches on top of each other.
+    /// True while apps are moving, so the pane can show progress.
     @State private var movingCut = false
     /// The pending coalesced apply, so a burst of drags cancels its predecessor rather than
     /// queueing another full seam move behind it. See `apply(outcome:)`.
     @State private var applyTask: Task<Void, Never>?
-    /// Why the last arrange could not place an app, if it could not.
-    ///
-    /// Surfaced rather than swallowed. A move is a synthesised drag and the OS can refuse one,
-    /// so an app can silently stay on the wrong side; showing nothing would leave the user
-    /// re-dragging a tile that Stow had already given up on.
-    @State private var arrangeFailures: [String] = []
     /// Stow's seam window number, so it is excluded from occupancy arithmetic.
     @State private var seamWindows: Set<CGWindowID> = []
 
@@ -451,15 +442,9 @@ private struct ArrangeContentView: View {
             Text("Arrange")
                 .font(.system(size: 19, weight: .bold, design: .rounded))
                 .foregroundStyle(StowTheme.ink)
-            if let budget {
-                Text("\(Int(budget.headroom)) pt headroom of \(Int(budget.usable)) usable")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(StowTheme.inkMuted)
-            } else {
-                Text("measuring…")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(StowTheme.inkMuted)
-            }
+            Text("Choose what stays visible and what waits in Stow.")
+                .font(.system(size: 11.5))
+                .foregroundStyle(StowTheme.inkMuted)
         }
     }
 
@@ -506,11 +491,6 @@ private struct ArrangeContentView: View {
     /// nothing about where it belongs.
     private var decisionList: some View {
         let candidates = candidateApps()
-        let outcome = BarPlan.outcome(candidates: candidates.map(\.plan),
-                                      zones: { store.config.zone(forBundleID: $0) },
-                                      placementFloor: hider.placementFloor)
-        let collateral = Set(outcome.collateral)
-        let belowFloor = Set(outcome.belowPlacementFloor)
 
         return VStack(alignment: .leading, spacing: 10) {
             if candidates.isEmpty {
@@ -522,10 +502,7 @@ private struct ArrangeContentView: View {
                             bundleID: candidate.plan.bundleID,
                             name: candidate.name,
                             icon: candidate.icon,
-                            widthPt: candidate.widthPt,
-                            isOnBarNow: candidate.isOnBarNow,
-                            isCollateral: collateral.contains(candidate.plan.bundleID),
-                            isBelowFloor: belowFloor.contains(candidate.plan.bundleID))
+                            isOnBarNow: candidate.isOnBarNow)
                     },
                     zoneOf: { store.config.zone(forBundleID: $0) },
                     onMove: { bundle, zone in
@@ -533,97 +510,30 @@ private struct ArrangeContentView: View {
                         // The zone is saved and drawn NOW; the seam move is coalesced. A board
                         // that needed a separate Apply press made the drag feel like it did
                         // nothing, and applying synchronously per drop froze it for seconds.
-                        apply(outcome: outcome)
+                        apply()
                     })
             }
 
-            // The consequences BEFORE the buttons, not after. They were below the board and
-            // read as a footnote, which is how an app the user never touched came to be hidden
-            // with the explanation off the bottom of the pane.
-            //
-            if !arrangeFailures.isEmpty {
+            if !hider.lastArrangeFailures.isEmpty {
                 consequenceBanner(
-                    count: arrangeFailures.count,
-                    headline: arrangeFailures.count == 1
+                    count: hider.lastArrangeFailures.count,
+                    headline: hider.lastArrangeFailures.count == 1
                         ? "1 app could not be moved"
-                        : "\(arrangeFailures.count) apps could not be moved",
-                    detail: "macOS refused the move. Try again, and if it keeps failing,"
-                        + " command-drag the app across Stow's icon by hand."
-                        + " Details: " + arrangeFailures.joined(separator: "; "))
+                        : "\(hider.lastArrangeFailures.count) apps could not be moved",
+                    detail: hider.lastArrangeFailures.map {
+                        $0.userMessage(displayName: Self.displayName(forBundleID:))
+                    }.joined(separator: "\n"))
             }
-            applyRow(outcome: outcome)
+            applyRow()
             systemSummary()
         }
     }
 
-    /// Legacy row renderer retained for compact layouts.
-    private func zoneRow(_ candidate: AppCandidate,
-                         isCollateral: Bool,
-                         hiddenAtRest: Bool) -> some View {
-        let bundle = candidate.plan.bundleID
-        let zone = store.config.zone(forBundleID: bundle)
-
-        return HStack(spacing: 9) {
-            if let icon = candidate.icon {
-                Image(nsImage: icon).resizable().frame(width: 16, height: 16)
-                    .opacity(hiddenAtRest ? 0.45 : 1)
-            } else {
-                Image(systemName: "app.dashed")
-                    .font(.system(size: 11))
-                    .foregroundStyle(StowTheme.inkMuted)
-                    .frame(width: 16, height: 16)
-            }
-            Text(candidate.name)
-                .font(.system(size: 11.5))
-                .foregroundStyle(hiddenAtRest ? StowTheme.inkSoft : StowTheme.ink)
-                .lineLimit(1)
-            if let width = candidate.widthPt {
-                Text("\(Int(width)) pt")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(StowTheme.inkMuted)
-            }
-            Spacer(minLength: 8)
-
-            if isCollateral {
-                Text("hidden anyway")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(StowTheme.orange)
-                    .help("Sits left of a seam your other choices require."
-                          + " Command-drag it right of that seam in the menu bar to keep it.")
-            } else if !candidate.isOnBarNow {
-                Text("off the bar")
-                    .font(.system(size: 10))
-                    .foregroundStyle(StowTheme.inkMuted)
-            }
-
-            Picker("", selection: Binding(
-                get: { zone },
-                set: { store.config.setZone($0, forBundleID: bundle) })) {
-                    Text("On Bar").tag(Zone.pinned)
-                    Text("In Stow").tag(Zone.tucked)
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 190)
-                .disabled(movingCut)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(StowTheme.card, in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    /// One row's worth of app: the planning facts plus what it takes to draw it.
-    ///
-    /// Split this way so `BarPlan` stays pure and testable: it only ever sees
-    /// `BarPlan.Candidate`, never an icon or a display name.
+    /// One row's worth of app: its managed identity plus drawing data.
     private struct AppCandidate {
-        let plan: BarPlan.Candidate
+        let plan: ManagedAppCandidate
         let name: String
         let icon: NSImage?
-        /// Live width, when the item is currently on the bar. Nil for a hidden app,
-        /// because its width is not measurable while it is pushed and a remembered one
-        /// would go stale as the app's own state changes.
-        let widthPt: CGFloat?
         let isOnBarNow: Bool
     }
 
@@ -678,7 +588,6 @@ private struct ArrangeContentView: View {
                 name: owner?.name ?? Self.displayName(forBundleID: plan.bundleID),
                 icon: owner.flatMap { NSRunningApplication(processIdentifier: $0.pid)?.icon }
                     ?? Self.icon(forBundleID: plan.bundleID),
-                widthPt: live?.frame.width,
                 isOnBarNow: live != nil)
         }
     }
@@ -742,54 +651,29 @@ private struct ArrangeContentView: View {
                 .stroke(StowTheme.orange.opacity(0.45), lineWidth: 1))
     }
 
-    /// Explains the placement floor, which is a macOS limit rather than a Stow choice.
-    ///
-    /// Worth its own note rather than folding into the others, because the fix is different:
-    /// the other warnings are resolved by changing a zone, this one only by physically moving
-    /// the icon.
-    private func floorNote(count: Int) -> some View {
-        Text("\(count) app\(count == 1 ? " sits" : "s sit") further left than macOS lets Stow"
-             + " place a seam, so \(count == 1 ? "it" : "they") cannot be split into"
-             + " different zones from each other. Command-drag"
-             + " \(count == 1 ? "it" : "them") to the right in the menu bar to zone"
-             + " \(count == 1 ? "it" : "them") separately.")
-            .font(.system(size: 10.5))
-            .foregroundStyle(StowTheme.inkSoft)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-
     /// Applies the zones, and offers the reveal.
     ///
     /// Apply plus the everyday open/close action.
-    private func applyRow(outcome: BarPlan.Outcome) -> some View {
-        let nothingHidden = outcome.tuckedBoundaryX == nil
-        let unsafe = !outcome.isSafeToApply
+    private func applyRow() -> some View {
+        let nothingHidden = !store.config.hidesAnything
         return HStack(spacing: 10) {
-            Button(unsafe ? "Unavailable app" : (nothingHidden ? "Show everything" : "Apply")) {
-                apply(outcome: outcome)
+            Button(nothingHidden ? "Show everything" : "Apply") {
+                apply()
             }
-            .disabled(movingCut || unsafe)
+            .disabled(movingCut)
 
             Button(hider.presentation == .revealed ? "Close Stow" : "Open Stow") {
                 hider.toggle()
                 Task { @MainActor in await rescan() }
             }
-            .disabled(movingCut || nothingHidden || unsafe)
+            .disabled(movingCut || nothingHidden)
             .help("Temporarily returns apps in Stow to the menu bar")
 
             if movingCut {
                 ProgressView().controlSize(.small).tint(StowTheme.blue)
             }
-            Text(seamSummary(outcome))
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(StowTheme.inkMuted)
         }
         .padding(.top, 4)
-    }
-
-    /// Where the boundary is, in one line.
-    private func seamSummary(_ outcome: BarPlan.Outcome) -> String {
-        cutX.map { "boundary x\(Int($0))" } ?? "boundary not placed"
     }
 
     /// Apple's own items, collapsed to ONE line.
@@ -854,13 +738,8 @@ private struct ArrangeContentView: View {
             .foregroundStyle(StowTheme.inkMuted)
     }
 
-    /// Applies the zones to the real bar.
-    ///
-    /// Delegates to `HideController.applyPersistedPlan`, which is the SAME path the app runs
-    /// at launch. Duplicating the placement logic here is how the two drifted apart once
-    /// already: the launch path gained a re-measure between the two seam placements and this
-    /// one did not, so applying from the pane produced a different bar than relaunching did.
-    private func apply(outcome: BarPlan.Outcome) {
+    /// Applies the zones through the same transactional arranger used at launch.
+    private func apply() {
         // COALESCE. One apply for a burst of drags, not one per drag.
         //
         // Zone changes are already saved and drawn the instant a tile is dropped, because the
@@ -896,12 +775,7 @@ private struct ArrangeContentView: View {
             // change, the first arrange MOVED `com.notebuddy.app` back onto the bar: it was
             // pinned, it had been swept, and nothing in the seam-moving path could recover it.
             //
-            let outcome = hider.arrangeByMovingItems(from: store.config)
-            arrangeFailures = outcome.failed.map {
-                $0.userMessage(displayName: Self.displayName(forBundleID:))
-            }
-            cutX = hider.measuredCutX()
-
+            _ = hider.arrangeByMovingItems(from: store.config)
             // Reuse the walk the apply just took. See `rescan(reusingOwners:)`.
             await rescan(reusingOwners: true)
             movingCut = false
@@ -911,11 +785,7 @@ private struct ArrangeContentView: View {
     /// - Parameter reusingOwners: when true, take the owner list from the cache instead of
     ///   walking every running application again.
     ///
-    ///   The walk is the single most expensive thing this pane does, measured at 0.965s, and a
-    ///   drag was paying for THREE of them: one in `applyPersistedPlan` to record homes, one in
-    ///   `correctPlacementIfWrong` to check what actually got hidden, and one here. The last two
-    ///   see the same bar, because the correction leaves the cache describing the final state,
-    ///   so walking again here bought nothing and cost a second of a frozen board.
+    ///   The ownership walk is expensive, and the arranger has just refreshed the same cache.
     ///
     ///   Only safe straight after an apply. Positions in the cache go stale the moment the bar
     ///   reflows, and this method matches claims against live window frames within 4pt to decide
@@ -978,7 +848,6 @@ private struct ArrangeContentView: View {
                 .filter { !seamIDs.contains($0.windowNumber) }
                 .map(\.frame.width))
 
-        cutX = hider.measuredCutX()
     }
 }
 

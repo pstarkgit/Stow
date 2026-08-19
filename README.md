@@ -10,6 +10,7 @@ It uses two plain zones:
 
 The app deliberately fails open. Every arrangement is verified after moving; if
 any selected app does not land, Stow rolls completed moves back and shows everything.
+Launch failures are shown in the menu panel rather than existing only in a log.
 
 ## Identity
 
@@ -34,6 +35,7 @@ Stow uses Accessibility to identify and move status items. It does not require
 Screen Recording.
 
 `Command-Shift-Escape` is the global emergency shortcut for **Show Everything**.
+It also cancels pending automatic re-tucks.
 
 ## Build And Install
 
@@ -75,6 +77,10 @@ that boundary with targeted Command-drag events.
 Stow snapshots the requested sides, moves only the apps that need changing, then
 scans the bar again. A failed move or verification mismatch reverses completed
 moves and rests the boundary so the entire menu bar remains visible.
+
+Configuration is schema-versioned. Older `vaulted` assignments migrate to
+`tucked`, and unknown fields are retained so a newer config is not silently
+flattened by an older build.
 
 ## Repository
 

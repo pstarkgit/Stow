@@ -102,8 +102,8 @@ private func identity(_ bundle: String, _ axLeftEdge: CGFloat) -> BarItemOwners.
         liveClaims: [identity("com.example.vendoragent", 2045)],
         homes: ["com.example.vendoragent": 2028],
         ownBundle: "dev.starkpat.stow")
-    #expect(candidates == [BarPlan.Candidate(bundleID: "com.example.vendoragent", homeX: 2045,
-                                             isPushable: true)])
+    #expect(candidates == [ManagedAppCandidate(bundleID: "com.example.vendoragent", homeX: 2045,
+                                               isPushable: true)])
 }
 
 @Test func anAppWithOnlyARememberedHomeFallsBackToItBecauseItHasNoLivePosition() {
@@ -114,8 +114,8 @@ private func identity(_ bundle: String, _ axLeftEdge: CGFloat) -> BarItemOwners.
         liveClaims: [],
         homes: ["com.microsoft.OneDrive": 1904],
         ownBundle: "dev.starkpat.stow")
-    #expect(candidates == [BarPlan.Candidate(bundleID: "com.microsoft.OneDrive", homeX: 1904,
-                                             isPushable: true)])
+    #expect(candidates == [ManagedAppCandidate(bundleID: "com.microsoft.OneDrive", homeX: 1904,
+                                               isPushable: true)])
 }
 
 @Test func anAppWithNeitherALiveClaimNorARememberedHomeStillBecomesAZoneableCandidate() {
@@ -128,8 +128,8 @@ private func identity(_ bundle: String, _ axLeftEdge: CGFloat) -> BarItemOwners.
         liveClaims: [],
         homes: [:],
         ownBundle: "dev.starkpat.stow")
-    #expect(candidates == [BarPlan.Candidate(bundleID: "com.microsoft.OneDrive", homeX: 0,
-                                             isPushable: false)])
+    #expect(candidates == [ManagedAppCandidate(bundleID: "com.microsoft.OneDrive", homeX: 0,
+                                               isPushable: false)])
 }
 
 @Test func aStrandedIdentityReportingTheSentinelIsNotOfferedAsACandidate() {
@@ -169,8 +169,8 @@ private func identity(_ bundle: String, _ axLeftEdge: CGFloat) -> BarItemOwners.
         liveClaims: [identity("com.apple.KerberosMenuExtra", 1160)],
         homes: [:],
         ownBundle: "dev.starkpat.stow")
-    #expect(candidates == [BarPlan.Candidate(bundleID: "com.apple.KerberosMenuExtra",
-                                             homeX: 1160, isPushable: true)])
+    #expect(candidates == [ManagedAppCandidate(bundleID: "com.apple.KerberosMenuExtra",
+                                               homeX: 1160, isPushable: true)])
 }
 
 @Test func threeKindsOfAppCoexistInOneCandidateListSortedRightToLeft() {
@@ -185,8 +185,8 @@ private func identity(_ bundle: String, _ axLeftEdge: CGFloat) -> BarItemOwners.
         homes: ["com.example.vendoragent": 2028],
         ownBundle: "dev.starkpat.stow")
     #expect(candidates == [
-        BarPlan.Candidate(bundleID: "com.example.vendoragent", homeX: 2028, isPushable: true),
-        BarPlan.Candidate(bundleID: "com.1password.1password", homeX: 1341, isPushable: true),
-        BarPlan.Candidate(bundleID: "com.microsoft.OneDrive", homeX: 0, isPushable: false),
+        ManagedAppCandidate(bundleID: "com.example.vendoragent", homeX: 2028, isPushable: true),
+        ManagedAppCandidate(bundleID: "com.1password.1password", homeX: 1341, isPushable: true),
+        ManagedAppCandidate(bundleID: "com.microsoft.OneDrive", homeX: 0, isPushable: false),
     ])
 }

@@ -2,18 +2,8 @@ import AppKit
 
 /// Arranges the bar by moving APPS to the correct side of a seam that stays put.
 ///
-/// The inverse of `HideController.moveCut`, and the reason it exists is measured. Moving the
-/// seam means destroying and recreating a status item, because macOS reads
-/// `NSStatusItem Preferred Position` only at creation; the preference names a coarse SLOT
-/// rather than a pixel, so finding the right one takes a five-probe bisection; and an apply
-/// runs two of those. Measured by `--probecost` and `--drag`: 0.415s per reposition, about ten
-/// per drag, 5.6s for a drop. Three attempts to cut the probe count all failed their
-/// correctness gate, because the bisection's habit of picking the LEFTMOST qualifying slot is
-/// what keeps pinned apps on the bar.
-///
-/// This removes the search rather than tuning it. The seam never moves, so there is no slot to
-/// find. Each app that is on the wrong side gets moved across, at a measured 0.2-1.0s, and an
-/// app already on the correct side costs nothing.
+/// The boundary never moves. Each app on the wrong side is moved across it, and an app
+/// already on the correct side costs nothing.
 ///
 /// It also deletes COLLATERAL. A seam sweeps everything to its left, so placing one to hide an
 /// app inevitably hides that app's neighbours: the pane has two warning banners about exactly
@@ -35,7 +25,7 @@ enum BarArranger {
 
     /// What one arrange did, for the caller to report or act on.
     struct Outcome {
-        struct Failure {
+        struct Failure: Equatable {
             let bundleID: String?
             let reason: String
             let recovery: String
@@ -58,6 +48,57 @@ enum BarArranger {
         var cost: TimeInterval = 0
 
         var isClean: Bool { failed.isEmpty }
+    }
+
+    struct TransactionMove: Equatable {
+        let bundleID: String
+        let windowID: CGWindowID
+        let hostPID: pid_t
+        let wantsRight: Bool
+    }
+
+    enum TransactionPhase {
+        case apply
+        case rollback
+    }
+
+    /// Runs the mutation half of an arrange as an all-or-nothing transaction.
+    ///
+    /// The closures make failure, verification, and rollback deterministic in tests;
+    /// the live caller supplies `ItemMover` and a fresh bar scan.
+    static func executeTransaction(
+        moves: [TransactionMove],
+        initialFailures: [Outcome.Failure] = [],
+        perform: (TransactionMove, Bool, TransactionPhase) -> Outcome.Failure?,
+        verify: () -> [Outcome.Failure]
+    ) -> Outcome {
+        var outcome = Outcome()
+        outcome.failed = initialFailures
+        guard outcome.failed.isEmpty else { return outcome }
+
+        var completed: [TransactionMove] = []
+        for move in moves {
+            if let failure = perform(move, move.wantsRight, .apply) {
+                outcome.failed.append(failure)
+                break
+            }
+            completed.append(move)
+            outcome.moved.append(move.bundleID)
+        }
+
+        if outcome.failed.isEmpty {
+            outcome.failed.append(contentsOf: verify())
+        }
+
+        guard !outcome.failed.isEmpty, !completed.isEmpty else { return outcome }
+        for move in completed.reversed() {
+            if let failure = perform(move, !move.wantsRight, .rollback) {
+                outcome.failed.append(failure)
+            }
+        }
+        outcome.rolledBack = true
+        outcome.moved.removeAll()
+        return outcome
     }
 
     /// Puts every app on the side of the tucked seam its zone requires.
@@ -180,7 +221,7 @@ enum BarArranger {
         // Resolving once removes the dependency on accessibility freshness entirely, and it also
         // removes an owner walk per move, which cost about 0.26s each.
         //
-        var toMove: [(bundleID: String, windowID: CGWindowID, hostPID: pid_t, wantsRight: Bool)] = []
+        var toMove: [TransactionMove] = []
         var expectations: [ExpectedPosition] = []
         var unresolvedOnHiddenSide = 0
 
@@ -194,11 +235,8 @@ enum BarArranger {
         // sub-second arranges.
         //
         // The budget is generous against the measured 0.46-0.79s so a slow-but-working bar still
-        // completes, and it is small enough that a pathological one gives the main actor back. An
-        // abandoned app is REPORTED, not skipped: a partial arrange that claims success is the
-        // failure mode this whole file has been fighting.
+        // completes, and it is small enough that a pathological one gives the main actor back.
         let deadline = Date().addingTimeInterval(totalBudget)
-        var abandoned: [String] = []
         for (index, item) in items.enumerated() {
             guard index != seamIndex else { continue }
             // COUNT the unresolvable rather than skipping them in silence.
@@ -224,100 +262,67 @@ enum BarArranger {
             if wantsRight == (index > seamIndex) {
                 outcome.alreadyCorrect.append(owner.bundleID)
             } else {
-                toMove.append((owner.bundleID, item.windowNumber, item.ownerPID, wantsRight))
+                toMove.append(TransactionMove(
+                    bundleID: owner.bundleID,
+                    windowID: item.windowNumber,
+                    hostPID: item.ownerPID,
+                    wantsRight: wantsRight))
             }
         }
 
-        var completed: [(bundleID: String, windowID: CGWindowID,
-                         hostPID: pid_t, originalWantsRight: Bool)] = []
-        for (bundleID, windowID, hostPID, wantsRight) in toMove {
-            guard Date() < deadline else {
-                abandoned.append(bundleID)
-                continue
-            }
-            // The SEAM is still re-read every time, and only the seam.
-            //
-            // Not for symmetry with the old code: the seam genuinely is recreated, because
-            // changing a status item's placement destroys and rebuilds it, so its window number
-            // really does change underneath an arrange. That is why the caller hands over a
-            // closure rather than a number. The items being moved are not recreated, which the
-            // id-stability test above settles, so they need no such treatment.
-            guard let liveSeamID = seamWindow() else {
-                outcome.failed.append(Outcome.Failure(
-                    bundleID: bundleID,
-                    reason: "the Stow boundary disappeared during the move.",
-                    recovery: "Choose Show Everything, then try again."))
-                continue
-            }
-
-            let destination: ItemMover.Destination = wantsRight
-                ? .rightOf(liveSeamID)
-                : .leftOf(liveSeamID)
-            do {
-                try ItemMover.move(windowID: windowID,
-                                   to: destination,
-                                   hostPID: hostPID)
-                outcome.moved.append(bundleID)
-                completed.append((bundleID, windowID, hostPID, !wantsRight))
-            } catch {
-                outcome.failed.append(Outcome.Failure(
-                    bundleID: bundleID,
-                    reason: friendlyMoveReason(error),
-                    recovery: "Try again; if it repeats, Command-drag that icon across Stow."))
-            }
-        }
-
-        // An unresolved item is not a clean arrange. Saying so is what stops a silent skip being
-        // read as success, which is exactly how a tucked app stayed visible with nothing reported.
+        var preflightFailures: [Outcome.Failure] = []
         if unresolvedOnHiddenSide > 0 {
-            outcome.failed.append(Outcome.Failure(
+            preflightFailures.append(Outcome.Failure(
                 bundleID: nil,
                 reason: "\(unresolvedOnHiddenSide) unidentified menu-bar item(s) sit on the"
                     + " hidden side, so Stow cannot prove they were selected.",
                 recovery: "Choose Show Everything and reopen Arrange."))
         }
-        for bundleID in abandoned {
-            outcome.failed.append(Outcome.Failure(
-                bundleID: bundleID,
-                reason: "the move took longer than Stow's \(Int(totalBudget))-second safety budget.",
-                recovery: "Try again after the menu bar settles."))
-        }
 
-        if outcome.failed.isEmpty {
-            let verification = verificationFailures(
-                expectations: expectations,
-                seamWindow: seamWindow)
-            outcome.failed.append(contentsOf: verification)
-        }
-
-        // A transaction is all-or-nothing. If any move or fresh verification failed, put every
-        // app already moved back on its original side before the caller is allowed to hide.
-        if !outcome.failed.isEmpty, !completed.isEmpty {
-            for move in completed.reversed() {
-                guard let liveSeamID = seamWindow() else {
-                    outcome.failed.append(Outcome.Failure(
+        let transaction = executeTransaction(
+            moves: toMove,
+            initialFailures: preflightFailures,
+            perform: { move, wantsRight, phase in
+                if phase == .apply, Date() >= deadline {
+                    return Outcome.Failure(
                         bundleID: move.bundleID,
-                        reason: "Stow could not restore this app because its boundary disappeared.",
-                        recovery: "Use Show Everything and Command-drag the icon back if needed."))
-                    continue
+                        reason: "the move took longer than Stow's"
+                            + " \(Int(totalBudget))-second safety budget.",
+                        recovery: "Try again after the menu bar settles.")
                 }
-                let destination: ItemMover.Destination = move.originalWantsRight
+                guard let liveSeamID = seamWindow() else {
+                    return Outcome.Failure(
+                        bundleID: move.bundleID,
+                        reason: phase == .apply
+                            ? "the Stow boundary disappeared during the move."
+                            : "Stow could not restore this app because its boundary disappeared.",
+                        recovery: "Choose Show Everything, then try again.")
+                }
+                let destination: ItemMover.Destination = wantsRight
                     ? .rightOf(liveSeamID)
                     : .leftOf(liveSeamID)
                 do {
                     try ItemMover.move(windowID: move.windowID,
                                        to: destination,
                                        hostPID: move.hostPID)
+                    return nil
                 } catch {
-                    outcome.failed.append(Outcome.Failure(
+                    return Outcome.Failure(
                         bundleID: move.bundleID,
-                        reason: "automatic rollback was refused by macOS.",
-                        recovery: "Use Show Everything and Command-drag the icon back if needed."))
+                        reason: phase == .apply
+                            ? friendlyMoveReason(error)
+                            : "automatic rollback was refused by macOS.",
+                        recovery: phase == .apply
+                            ? "Try again; if it repeats, Command-drag that icon across Stow."
+                            : "Use Show Everything and Command-drag the icon back if needed.")
                 }
-            }
-            outcome.rolledBack = true
-            outcome.moved.removeAll()
-        }
+            },
+            verify: {
+                verificationFailures(expectations: expectations, seamWindow: seamWindow)
+            })
+        outcome.moved = transaction.moved
+        outcome.failed.append(contentsOf: transaction.failed)
+        outcome.rolledBack = transaction.rolledBack
 
         outcome.cost = Date().timeIntervalSince(began)
         return outcome

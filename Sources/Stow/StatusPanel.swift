@@ -107,6 +107,8 @@ struct StatusPanel: View {
     /// reach by clicking them, and on a crowded bar there were seventeen of them needing no
     /// action at all.
     let hiddenApps: [HiddenApp]
+    /// Failures from the latest manual or launch arrangement.
+    let arrangementFailures: [BarArranger.Outcome.Failure]
     /// The display this budget was measured against, "Studio Display",
     /// "Built-in Retina Display". Shown beside the headroom figure so a
     /// multi-monitor user is never left guessing which screen the number
@@ -149,6 +151,9 @@ struct StatusPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            if !arrangementFailures.isEmpty {
+                failureBanner
+            }
             // The hidden run gets TOP BILLING, directly under the header.
             //
             // It is the reason the panel is opened: these are the only apps the user cannot
@@ -165,6 +170,38 @@ struct StatusPanel: View {
         // enough that the dropdown still reads as a dropdown and not a window.
         .frame(width: 340)
         .background(auroraCanvas)
+    }
+
+    private var failureBanner: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Label(arrangementFailures.count == 1
+                  ? "Stow could not finish the arrangement"
+                  : "Stow could not finish \(arrangementFailures.count) changes",
+                  systemImage: "exclamationmark.triangle.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(StowTheme.orange)
+            ForEach(Array(arrangementFailures.enumerated()), id: \.offset) { _, failure in
+                Text(failure.userMessage(displayName: Self.displayName))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(StowTheme.inkSoft)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(StowTheme.orange.opacity(0.10))
+    }
+
+    private static func displayName(_ bundleID: String) -> String {
+        if let running = NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundleID).first,
+           let name = running.localizedName {
+            return name
+        }
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+            return FileManager.default.displayName(atPath: url.path)
+        }
+        return bundleID
     }
 
     // MARK: - Header
@@ -638,6 +675,7 @@ extension StatusPanel {
                 HiddenApp(bundleID: "com.example.utility", name: "Utility",
                           icon: nil, zone: .tucked, pid: 4),
             ],
+            arrangementFailures: [],
             displayName: "Studio Display")
     }
 }
@@ -680,6 +718,7 @@ extension StatusPanel {
                                               notchWidth: 0, systemTrailingWidth: 360,
                                               occupiedWidths: [60, 74, 30]),
                             hiddenApps: [],
+                            arrangementFailures: [],
                             displayName: "LG ULTRAGEAR+"))
         measure("one app tucked            ",
                 StatusPanel(state: .tidy,
@@ -690,6 +729,7 @@ extension StatusPanel {
                                 HiddenApp(bundleID: "com.microsoft.Outlook", name: "Outlook",
                                           icon: nil, zone: .tucked, pid: 1),
                             ],
+                            arrangementFailures: [],
                             displayName: "LG ULTRAGEAR+"))
         measure("three apps hidden         ", sample())
         measure("three hidden + update     ", {

@@ -7,7 +7,7 @@ import CoreGraphics
 /// WHY THIS EXISTS. Stow's placement cost is not the hiding, it is the arranging. Hiding is a
 /// single `length` write and is instant. Arranging means putting the seam on the correct side
 /// of an app, and a seam can only move by being destroyed and recreated, because macOS reads
-/// `NSStatusItem Preferred Position` only at item creation. Measured by `--probecost`, one
+/// `NSStatusItem Preferred Position` only at item creation. In live measurements, one
 /// reposition costs a mean of 0.415s, the placement preference resolves to a coarse SLOT
 /// rather than a pixel so finding the right one takes a five-probe bisection, and an apply
 /// runs two of those. That is about 4.2s of a 5.6s drag, and three separate attempts to cut

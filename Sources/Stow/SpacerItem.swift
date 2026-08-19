@@ -118,64 +118,6 @@ final class SpacerItem {
         UserDefaults.standard.object(forKey: placementKey(for: boundary)) as? Int
     }
 
-    /// The leftmost position a NEW status item can actually be placed at, measured.
-    ///
-    /// This is a hard limit macOS imposes and it bounds the whole zone design. Measured by
-    /// sweeping the placement preference from 1 to 2400 with a fresh autosave name, on a
-    /// 2560pt bar carrying twelve items:
-    ///
-    ///     pref 400   ->  x2098
-    ///     pref 600   ->  x1988
-    ///     pref 800   ->  x1987
-    ///     pref 1000+ ->  x1987      every value up to 2400 lands here
-    ///
-    /// So x1987 was the floor, and no preference reached further left. Meanwhile real items
-    /// sat at x1841 and x1945, LEFT of that floor: existing items can occupy positions a
-    /// new item may not claim.
-    ///
-    /// Why the reason is not asserted here: it was not established. What is established is
-    /// the consequence, and it is concrete. A seam cannot be placed between two apps that
-    /// both sit left of the floor, so those apps cannot be separated into different zones,
-    /// however the user sets them. The plan reports them instead.
-    ///
-    /// Measuring it costs one item creation and one settle, so callers should measure once
-    /// per bar shape rather than per app, and MUST measure with the seam at rest: a probe
-    /// created while a seam is expanded is pushed off the bar and measures nothing useful.
-    static func measurePlacementFloor() -> CGFloat? {
-        let probeName = "StowFloorProbe"
-        let key = "NSStatusItem Preferred Position \(probeName)"
-        UserDefaults.standard.set(2400, forKey: key)
-        UserDefaults.standard.synchronize()
-
-        let before = currentWindowNumbers()
-        let probe = NSStatusBar.system.statusItem(withLength: restingLength)
-        probe.autosaveName = probeName
-        probe.button?.image = nil
-        probe.button?.title = ""
-
-        var floor: CGFloat?
-        let deadline = Date().addingTimeInterval(2.0)
-        while Date() < deadline, floor == nil {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
-            guard let screen = NSScreen.main else { break }
-            let scan = BarScanner.scan(menuBarRect: BarScanner.menuBarRect(for: screen))
-            floor = scan.items.first { !before.contains($0.windowNumber) }?.frame.minX
-        }
-
-        NSStatusBar.system.removeStatusItem(probe)
-        // Leave no trace: this preference is not a placement anyone should inherit.
-        UserDefaults.standard.removeObject(forKey: key)
-
-        // Reject a nonsense answer rather than reporting it.
-        //
-        // Measured while a seam was expanded, this returned x-3127: the probe was itself
-        // pushed off the bar by the ~5,000pt seam, so what it measured was where a pushed
-        // item sits, not where a new item may be placed. A negative floor would then mark
-        // every app as below it and the pane would claim nothing can be zoned.
-        guard let floor, floor > 0 else { return nil }
-        return floor
-    }
-
     /// The one and only status item this app ever creates at a time. Kept as a strong
     /// reference for the lifetime of this object; letting it fall would drop the item
     /// from the bar with no warning to the user.
