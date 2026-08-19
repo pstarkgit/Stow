@@ -248,6 +248,14 @@ else
     echo "         Access once to make the grant stick."
 fi
 
+# Do not publish a bundle whose CMS signature cannot build a trusted chain on
+# this Mac. `codesign` can successfully write a signature while a missing or
+# stale intermediate still makes the result unverifiable.
+if ! codesign --verify --deep --strict --verbose=2 "$APP"; then
+    echo "ERROR: the staged Stow.app signature did not verify; live app unchanged." >&2
+    exit 1
+fi
+
 # --- Publication: the only point where the live app is touched ----------------
 stop_legacy_airlock || exit 1
 stop_legacy_rail || exit 1
