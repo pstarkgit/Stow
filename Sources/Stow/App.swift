@@ -105,19 +105,16 @@ struct StowApp: App {
         MenuBarExtra {
             StatusPanel(
                 state: snapshot.state,
-                budget: snapshot.budget,
                 // The apps Stow is HIDING, which is what the panel offers now. Resolved from
                 // the persisted zones rather than a bar scan, because a hidden item is not in a
                 // scan at all: it reports a large negative position and the owner walk drops it.
                 hiddenApps: hider.hiddenApps(from: store.config),
                 arrangementFailures: hider.lastArrangeFailures,
-                displayName: snapshot.displayName,
                 // THE action. Toggling the seams is what Stow is for, and it is wired to the
                 // panel's one primary control.
                 onTuckAllButPinned: {
                     hider.toggle()
-                    // Re-measure after the bar changes shape, or the panel's capacity figures
-                    // describe the bar as it was before the change.
+                    // Keep the shared snapshot current for the glyph and diagnostics.
                     remeasure()
                 },
                 presentation: hider.presentation,
@@ -160,8 +157,7 @@ struct StowApp: App {
                     }
                 },
                 onUpdate: { updater.update() },
-                onReadNotes: { open(.whatsNew) },
-                onRefresh: { remeasure() },
+                onArrange: { open(.arrange) },
                 onDiagnostics: { open(.doctor) },
                 onSettings: { open(.settings) },
                 onQuit: { NSApp.terminate(nil) },

@@ -13,6 +13,19 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.19
+
+- Redesigned the menu-bar panel as a horizontal shelf that mirrors the menu bar,
+  keeping up to six hidden apps in one icon run and scrolling larger sets.
+- Replaced raw capacity measurements with a plain hidden-app status and a direct
+  Arrange command.
+- Show All, Hide All, and Add Apps now live in the shelf's trailing segment instead
+  of a separate full-strength gradient button.
+- Settings and Diagnostics are now labelled, while refresh and release notes remain
+  in the main window where they do not crowd the everyday panel.
+- The Aurora background now fades continuously instead of ending in a visible band
+  through the app list.
+
 ## 0.1.18
 
 - Show Everything now cancels every pending automatic re-tuck, so an old timer
