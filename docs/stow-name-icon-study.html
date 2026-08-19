@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Stow, Tuck, Pocket, Fold - Icon Study</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg:#090b0f; --surface:#12161c; --line:#2a3039;
+      --text:#f5f7fa; --muted:#98a1ae;
+      --lime:#b8f45d; --teal:#24c9b8; --indigo:#5957ec;
+    }
+    * { box-sizing:border-box; }
+    body {
+      margin:0; min-height:100vh; background:var(--bg); color:var(--text);
+      font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",sans-serif;
+      letter-spacing:0;
+    }
+    header {
+      max-width:1420px; margin:0 auto; padding:42px 30px 24px;
+      border-bottom:1px solid var(--line);
+    }
+    h1 { margin:0 0 8px; font-size:30px; }
+    header p { margin:0; color:var(--muted); font-size:15px; line-height:1.5; }
+    main {
+      max-width:1420px; margin:0 auto; padding:28px 30px 42px;
+      display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:20px;
+    }
+    article {
+      min-width:0; border:1px solid var(--line); border-radius:8px;
+      overflow:hidden; background:var(--surface);
+    }
+    .title { padding:17px 18px 14px; border-bottom:1px solid var(--line); }
+    h2 { margin:0 0 5px; font-size:20px; }
+    .title p { margin:0; min-height:55px; color:var(--muted); font-size:12.5px; line-height:1.45; }
+    .tag {
+      display:inline-block; margin-left:7px; padding:3px 6px; border-radius:4px;
+      border:1px solid rgba(184,244,93,.45); color:var(--lime);
+      font-size:9px; font-weight:800; vertical-align:3px;
+    }
+    .stage {
+      min-height:300px; display:grid; place-items:center; padding:28px;
+      background:radial-gradient(circle at 50% 45%,rgba(36,201,184,.09),transparent 50%),#0d1015;
+    }
+    .app { width:min(218px,80%); aspect-ratio:1; filter:drop-shadow(0 17px 27px rgba(0,0,0,.44)); }
+    .testing { padding:16px 18px 19px; border-top:1px solid var(--line); }
+    .label { margin-bottom:9px; color:var(--muted); font-size:9px; font-weight:760; text-transform:uppercase; }
+    .bar {
+      height:40px; padding:0 11px; display:flex; align-items:center; justify-content:flex-end;
+      gap:10px; border-radius:6px; font-size:11px; font-weight:650;
+    }
+    .bar + .bar { margin-top:7px; }
+    .dark { background:#030405; color:#fff; }
+    .light { background:#edf0f3; color:#15181c; }
+    .mini { width:20px; height:20px; flex:none; }
+    .palette { display:flex; gap:5px; margin-top:12px; }
+    .palette i { width:18px; height:4px; border-radius:2px; }
+    .reason { margin-top:12px; min-height:54px; color:#c9d0da; font-size:11.5px; line-height:1.45; }
+    footer { max-width:1420px; margin:0 auto 38px; padding:0 30px; color:var(--muted); font-size:13px; }
+    footer strong { color:var(--text); }
+    @media(max-width:1000px){ main{grid-template-columns:repeat(2,1fr)} }
+    @media(max-width:620px){ main{grid-template-columns:1fr}.stage{min-height:270px}.app{width:200px} }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Behavior-First Icon Study</h1>
+    <p>Four grounded names. Every mark shows a small app tile leaving the visible bar without disappearing from the system.</p>
+  </header>
+  <main>
+    <article>
+      <div class="title">
+        <h2>Stow <span class="tag">STRONGEST</span></h2>
+        <p>A tile passes behind the bar and remains visibly present beneath it.</p>
+      </div>
+      <div class="stage">
+        <svg class="app" viewBox="0 0 256 256" aria-label="Stow app icon">
+          <defs><linearGradient id="stow-g" x1="18" y1="18" x2="238" y2="238" gradientUnits="userSpaceOnUse"><stop stop-color="#b8f45d"/><stop offset=".49" stop-color="#24c9b8"/><stop offset="1" stop-color="#5957ec"/></linearGradient></defs>
+          <rect x="10" y="10" width="236" height="236" rx="58" fill="url(#stow-g)"/>
+          <rect x="45" y="103" width="166" height="30" rx="15" fill="#090b0f"/>
+          <rect x="68" y="69" width="38" height="38" rx="11" fill="#090b0f"/>
+          <rect x="117" y="69" width="38" height="38" rx="11" fill="#090b0f"/>
+          <rect x="157" y="118" width="48" height="48" rx="13" fill="#090b0f"/>
+          <path d="M164 132h34" stroke="url(#stow-g)" stroke-width="8" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="testing">
+        <div class="label">18 px menu-bar mark</div>
+        <div class="bar dark">
+          <svg class="mini" viewBox="0 0 20 20"><rect x="2" y="7" width="16" height="3" rx="1.5" fill="currentColor"/><rect x="4.2" y="3.2" width="4" height="4" rx="1" fill="currentColor"/><rect x="11.7" y="9" width="5.1" height="5.1" rx="1.2" fill="currentColor"/></svg>
+          Wed Aug 19&nbsp;&nbsp;8:18 AM
+        </div>
+        <div class="bar light">
+          <svg class="mini" viewBox="0 0 20 20"><rect x="2" y="7" width="16" height="3" rx="1.5" fill="currentColor"/><rect x="4.2" y="3.2" width="4" height="4" rx="1" fill="currentColor"/><rect x="11.7" y="9" width="5.1" height="5.1" rx="1.2" fill="currentColor"/></svg>
+          Wed Aug 19&nbsp;&nbsp;8:18 AM
+        </div>
+        <div class="palette"><i style="background:var(--lime)"></i><i style="background:var(--teal)"></i><i style="background:var(--indigo)"></i></div>
+        <div class="reason">The most literal without becoming an arrow or storage box. It still reads correctly at tiny size.</div>
+      </div>
+    </article>
+
+    <article>
+      <div class="title">
+        <h2>Tuck</h2>
+        <p>A tile slips under the edge of the bar, emphasizing a small reversible gesture.</p>
+      </div>
+      <div class="stage">
+        <svg class="app" viewBox="0 0 256 256" aria-label="Tuck app icon">
+          <defs><linearGradient id="tuck-g" x1="18" y1="18" x2="238" y2="238" gradientUnits="userSpaceOnUse"><stop stop-color="#b8f45d"/><stop offset=".49" stop-color="#24c9b8"/><stop offset="1" stop-color="#5957ec"/></linearGradient></defs>
+          <rect x="10" y="10" width="236" height="236" rx="58" fill="url(#tuck-g)"/>
+          <path d="M46 91h166v38H123c-17 0-31 14-31 31v22" fill="none" stroke="#090b0f" stroke-width="25" stroke-linecap="round" stroke-linejoin="round"/>
+          <rect x="71" y="157" width="48" height="48" rx="13" fill="#090b0f"/>
+        </svg>
+      </div>
+      <div class="testing">
+        <div class="label">18 px menu-bar mark</div>
+        <div class="bar dark">
+          <svg class="mini" viewBox="0 0 20 20"><path d="M2 6.5h16v3.1H9.8c-1.9 0-3.3 1.5-3.3 3.3v1.6" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/><rect x="4.2" y="12.2" width="4.8" height="4.8" rx="1.2" fill="currentColor"/></svg>
+          Wed Aug 19&nbsp;&nbsp;8:18 AM
+        </div>
+        <div class="bar light">
+          <svg class="mini" viewBox="0 0 20 20"><path d="M2 6.5h16v3.1H9.8c-1.9 0-3.3 1.5-3.3 3.3v1.6" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/><rect x="4.2" y="12.2" width="4.8" height="4.8" rx="1.2" fill="currentColor"/></svg>
+          Wed Aug 19&nbsp;&nbsp;8:18 AM
+        </div>
+        <div class="palette"><i style="background:var(--lime)"></i><i style="background:var(--teal)"></i><i style="background:var(--indigo)"></i></div>
+        <div class="reason">Friendly and action-oriented. The bent bar is expressive, but slightly more illustrative than Stow.</div>
+      </div>
+    </article>
+
+    <article>
+      <div class="title">
+        <h2>Pocket</h2>
+        <p>A tile stays nearby inside an open pocket rather than vanishing into storage.</p>
+      </div>
+      <div class="stage">
+        <svg class="app" viewBox="0 0 256 256" aria-label="Pocket app icon">
+          <defs><linearGradient id="pocket-g" x1="18" y1="18" x2="238" y2="238" gradientUnits="userSpaceOnUse"><stop stop-color="#b8f45d"/><stop offset=".49" stop-color="#24c9b8"/><stop offset="1" stop-color="#5957ec"/></linearGradient></defs>
+          <rect x="10" y="10" width="236" height="236" rx="58" fill="url(#pocket-g)"/>
+          <path d="M55 103v43c0 30 21 51 51 51h44c30 0 51-21 51-51v-43" fill="none" stroke="#090b0f" stroke-width="24" stroke-linecap="round"/>
+          <rect x="104" y="65" width="48" height="48" rx="13" fill="#090b0f"/>
+          <path d="M128 113v27" stroke="#090b0f" stroke-width="16" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="testing">
+        <div class="label">18 px menu-bar mark</div>
+        <div class="bar dark">
+          <svg class="mini" viewBox="0 0 20 20"><path d="M3 8.2v3.4c0 3.2 2.2 5.4 5.4 5.4h3.2c3.2 0 5.4-2.2 5.4-5.4V8.2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><rect x="7.4" y="2.8" width="5.2" height="5.2" rx="1.3" fill="currentColor"/></svg>
+          Wed Aug 19&nbsp;&nbsp;8:18 AM
+        </div>
+        <div class="bar light">
+          <svg class="mini" viewBox="0 0 20 20"><path d="M3 8.2v3.4c0 3.2 2.2 5.4 5.4 5.4h3.2c3.2 0 5.4-2.2 5.4-5.4V8.2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><rect x="7.4" y="2.8" width="5.2" height="5.2" rx="1.3" fill="currentColor"/></svg>
+          Wed Aug 19&nbsp;&nbsp;8:18 AM
+        </div>
+        <div class="palette"><i style="background:var(--lime)"></i><i style="background:var(--teal)"></i><i style="background:var(--indigo)"></i></div>
+        <div class="reason">Warm and approachable, but risks reading as download, inbox, or save rather than menu-bar control.</div>
+      </div>
+    </article>
+
+    <article>
+      <div class="title">
+        <h2>Fold</h2>
+        <p>The bar itself bends around a tile, making the hide and reveal explicitly reversible.</p>
+      </div>
+      <div class="stage">
+        <svg class="app" viewBox="0 0 256 256" aria-label="Fold app icon">
+          <defs><linearGradient id="fold2-g" x1="18" y1="18" x2="238" y2="238" gradientUnits="userSpaceOnUse"><stop stop-color="#b8f45d"/><stop offset=".49" stop-color="#24c9b8"/><stop offset="1" stop-color="#5957ec"/></linearGradient></defs>
+          <rect x="10" y="10" width="236" height="236" rx="58" fill="url(#fold2-g)"/>
+          <path d="M46 86h115l49 45-49 45H46l45-45-45-45Z" fill="#090b0f"/>
+          <rect x="93" y="108" width="45" height="45" rx="12" fill="url(#fold2-g)"/>
+        </svg>
+      </div>
+      <div class="testing">
+        <div class="label">18 px menu-bar mark</div>
+        <div class="bar dark">
+          <svg class="mini" viewBox="0 0 20 20"><path d="M2 5.4h9.2l5.7 4.6-5.7 4.6H2L6.7 10 2 5.4Z" fill="currentColor"/><rect x="6.6" y="7.7" width="4.5" height="4.5" rx="1.1" fill="#030405"/></svg>
+          Wed Aug 19&nbsp;&nbsp;8:18 AM
+        </div>
+        <div class="bar light">
+          <svg class="mini" viewBox="0 0 20 20"><path d="M2 5.4h9.2l5.7 4.6-5.7 4.6H2L6.7 10 2 5.4Z" fill="currentColor"/><rect x="6.6" y="7.7" width="4.5" height="4.5" rx="1.1" fill="#edf0f3"/></svg>
+          Wed Aug 19&nbsp;&nbsp;8:18 AM
+        </div>
+        <div class="palette"><i style="background:var(--lime)"></i><i style="background:var(--teal)"></i><i style="background:var(--indigo)"></i></div>
+        <div class="reason">Compact and dynamic, though the pointed silhouette still carries some navigation-arrow baggage.</div>
+      </div>
+    </article>
+  </main>
+  <footer><strong>Recommendation:</strong> Stow. The name and mark both describe the actual behavior without requiring a space, storage, or railway metaphor.</footer>
+</body>
+</html>
