@@ -13,6 +13,11 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.16
+
+- Enlarged and thickened the Stow menu-bar mark so it matches the visual weight
+  of neighboring icons at 18 points.
+
 ## 0.1.15
 
 - Renamed the app to Stow and introduced the bar-and-tile Stow mark.

@@ -57,20 +57,17 @@ enum StowGlyph {
     /// neighbours need about 88%.
     static let grid: CGFloat = 22
 
-    /// How much of the available box the body fills, as a fraction.
+    /// How much of the available box the geometry grid fills, as a fraction.
     ///
-    /// THE one control over apparent size. Measured against neighbours rather than chosen: in a
-    /// zoomed capture AuthBar's tile was 78x84px where the original mark was 65x73,
-    /// so it was 15% short,
-    /// and the design's own 17-of-22 body was 76% fill against the ~88% its neighbours occupy.
-    ///
-    /// This is a fraction of the box rather than a grid coordinate on purpose. The hatch is
-    /// positioned relative to the BODY, so this can change without the mark drifting
-    /// inside it, which is exactly what went wrong when size was controlled by the grid.
-    /// 1.0 means the body fills the whole inset box, and the 6% inset is then the only margin.
-    /// Measured: that puts the ink at 88.9% of the 18pt canvas, against 76% for the design's own
-    /// 17-of-22 body and about 88% for the neighbours it sits beside.
+    /// Apparent size is ultimately controlled by the ink bounds inside this grid.
+    /// Keeping the grid full-size avoids compounding its margin with the image's
+    /// own 6% rendering inset.
     static let bodyFill: CGFloat = 1.0
+
+    /// The freestanding mark needs almost the full menu-bar canvas. The old 6%
+    /// inset compounded with the whitespace inside the behavior mark and made
+    /// it visibly smaller than neighboring status icons.
+    static let renderInsetFraction: CGFloat = 0.01
 
     /// Menu bar artwork is 18 pt, NSStatusItem's usable height. Square, because
     /// the token is square.
@@ -97,29 +94,29 @@ enum StowGlyph {
         let body = bodyRect(in: rect)
         let path = NSBezierPath()
 
-        let bar = NSRect(x: body.minX + body.width * 0.08,
-                         y: body.minY + body.height * 0.43,
-                         width: body.width * 0.84,
-                         height: body.height * 0.17)
+        let bar = NSRect(x: body.minX + body.width * 0.04,
+                         y: body.minY + body.height * 0.37,
+                         width: body.width * 0.92,
+                         height: body.height * 0.24)
         path.appendRoundedRect(bar, xRadius: bar.height / 2, yRadius: bar.height / 2)
 
-        for x in [0.20, 0.46] {
+        for x in [0.18, 0.48] {
             let tile = NSRect(x: body.minX + body.width * x,
-                              y: body.minY + body.height * 0.61,
-                              width: body.width * 0.20,
-                              height: body.height * 0.20)
+                              y: body.minY + body.height * 0.69,
+                              width: body.width * 0.25,
+                              height: body.height * 0.25)
             path.appendRoundedRect(tile,
-                                   xRadius: body.width * 0.045,
-                                   yRadius: body.width * 0.045)
+                                   xRadius: body.width * 0.055,
+                                   yRadius: body.width * 0.055)
         }
 
-        let stowed = NSRect(x: body.minX + body.width * 0.60,
-                            y: body.minY + body.height * 0.17,
-                            width: body.width * 0.27,
-                            height: body.height * 0.27)
+        let stowed = NSRect(x: body.minX + body.width * 0.61,
+                            y: body.minY + body.height * 0.06,
+                            width: body.width * 0.31,
+                            height: body.height * 0.31)
         path.appendRoundedRect(stowed,
-                               xRadius: body.width * 0.055,
-                               yRadius: body.width * 0.055)
+                               xRadius: body.width * 0.065,
+                               yRadius: body.width * 0.065)
         return path
     }
 
@@ -132,13 +129,18 @@ enum StowGlyph {
                       width: side, height: side)
     }
 
+    static func artworkRect(in rect: NSRect) -> NSRect {
+        let pad = min(rect.width, rect.height) * renderInsetFraction
+        return rect.insetBy(dx: pad, dy: pad)
+    }
+
     /// A small horizontal slot inside the stowed tile.
     static func markPath(in rect: NSRect) -> NSBezierPath {
         let body = bodyRect(in: rect)
-        let slot = NSRect(x: body.minX + body.width * 0.635,
-                          y: body.minY + body.height * 0.295,
-                          width: body.width * 0.20,
-                          height: body.height * 0.045)
+        let slot = NSRect(x: body.minX + body.width * 0.65,
+                          y: body.minY + body.height * 0.19,
+                          width: body.width * 0.23,
+                          height: body.height * 0.07)
         return NSBezierPath(roundedRect: slot,
                             xRadius: slot.height / 2,
                             yRadius: slot.height / 2)
@@ -210,8 +212,7 @@ enum StowGlyph {
             // Constant inset, independent of `glow`. Tying it to the glow made
             // AuthBar's token render LARGER whenever the bloom was off, so the mark
             // changed size between states. The room is reserved either way.
-            let pad = min(rect.width, rect.height) * 0.06
-            let box = rect.insetBy(dx: pad, dy: pad)
+            let box = artworkRect(in: rect)
             let path = tokenPath(in: box)
 
             if glow, paint.glowRadius > 0 {

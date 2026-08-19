@@ -116,6 +116,13 @@ import CoreGraphics
     #expect(body.contains(mark))
 }
 
+@Test func theInkUsesMostOfTheMenuBarCanvas() {
+    let canvas = NSRect(origin: .zero, size: StowGlyph.menuBarSize)
+    let ink = StowGlyph.bodyPath(in: StowGlyph.artworkRect(in: canvas)).bounds
+    #expect(ink.width / canvas.width >= 0.88)
+    #expect(ink.height / canvas.height >= 0.85)
+}
+
 @Test func renderedArtworkIsNotATemplate() {
     // Template images get force-recoloured monochrome by macOS, discarding every
     // stop in paint(for:).
