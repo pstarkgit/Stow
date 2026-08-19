@@ -182,7 +182,7 @@ enum BarArranger {
         //
         var toMove: [(bundleID: String, windowID: CGWindowID, hostPID: pid_t, wantsRight: Bool)] = []
         var expectations: [ExpectedPosition] = []
-        var unresolved = 0
+        var unresolvedOnHiddenSide = 0
 
         // A TOTAL BUDGET, because there was none and the arithmetic was alarming.
         //
@@ -208,7 +208,9 @@ enum BarArranger {
             // sat visible on the wrong side. The arrange had never seen it. A count is the
             // difference between "everything is right" and "everything I could see is right".
             guard let owner = item.owner(in: claims) else {
-                unresolved += 1
+                if unresolvedItemIsUnsafe(index: index, seamIndex: seamIndex) {
+                    unresolvedOnHiddenSide += 1
+                }
                 continue
             }
             guard !VisibleRowIdentity.cannotBeAddressedIndividually(owner.bundleID),
@@ -267,11 +269,11 @@ enum BarArranger {
 
         // An unresolved item is not a clean arrange. Saying so is what stops a silent skip being
         // read as success, which is exactly how a tucked app stayed visible with nothing reported.
-        if unresolved > 0 {
+        if unresolvedOnHiddenSide > 0 {
             outcome.failed.append(Outcome.Failure(
                 bundleID: nil,
-                reason: "\(unresolved) menu-bar item(s) could not be identified, so the result"
-                    + " could not be verified.",
+                reason: "\(unresolvedOnHiddenSide) unidentified menu-bar item(s) sit on the"
+                    + " hidden side, so Stow cannot prove they were selected.",
                 recovery: "Choose Show Everything and reopen Arrange."))
         }
         for bundleID in abandoned {
@@ -319,6 +321,13 @@ enum BarArranger {
 
         outcome.cost = Date().timeIntervalSince(began)
         return outcome
+    }
+
+    /// An unidentified item is dangerous only when it sits on the side the expanded boundary
+    /// will hide. Unidentified system windows on the visible side cannot be swept and must not
+    /// make every arrangement fail.
+    nonisolated static func unresolvedItemIsUnsafe(index: Int, seamIndex: Int) -> Bool {
+        index < seamIndex
     }
 
     private static func verificationFailures(

@@ -163,6 +163,12 @@ import Testing
     #expect(RevealCoordinator.drainBudget <= BarArranger.totalBudget)
 }
 
+@Test func onlyUnidentifiedItemsOnTheHiddenSideBlockAnArrange() {
+    #expect(BarArranger.unresolvedItemIsUnsafe(index: 2, seamIndex: 4))
+    #expect(!BarArranger.unresolvedItemIsUnsafe(index: 4, seamIndex: 4))
+    #expect(!BarArranger.unresolvedItemIsUnsafe(index: 6, seamIndex: 4))
+}
+
 // MARK: - the hides-anything predicate
 
 // This was written out by hand in two switch statements that must agree: the arrange's success ending
