@@ -390,13 +390,10 @@ extension MainWindow {
 
 // MARK: - Arrange
 
-/// Design section 10: "measured-width bar with three zones and the stage marked
-/// as reserved space."
+/// The measured menu bar split into the two zones Stow actually supports.
 ///
-/// The three zones themselves, which item is PINNED, TUCKED, or VAULTED, are
-/// persisted policy that would live in `Store.swift`, which this stage does not
-/// build. Rather than invent a fake assignment or leave the pane blank, this
-/// shows the one thing that IS real right now: which items the window server
+/// The two zones themselves, On Bar and In Stow, are
+/// persisted policy in `Store.swift`. The pane also shows which items the window server
 /// currently reports on the bar versus pushed off it, with the same measured
 /// arithmetic `BarBudget` already computes for `canReveal`.
 private struct ArrangeContentView: View {
@@ -425,8 +422,7 @@ private struct ArrangeContentView: View {
     /// so an app can silently stay on the wrong side; showing nothing would leave the user
     /// re-dragging a tile that Stow had already given up on.
     @State private var arrangeFailures: [String] = []
-    /// BOTH seams' window numbers, so they are excluded from the decision and from the
-    /// occupancy arithmetic. Stow owns three items now: its token and two seams.
+    /// Stow's seam window number, so it is excluded from occupancy arithmetic.
     @State private var seamWindows: Set<CGWindowID> = []
 
 
@@ -478,13 +474,11 @@ private struct ArrangeContentView: View {
     /// is choosing the cut, which is what this pane now offers.
     private var explanation: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Everything to the LEFT of the cut leaves the bar when you hide."
-                 + " Everything to the right stays.")
+            Text("Drag apps between On Bar and In Stow.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(StowTheme.ink)
-            Text("Stow cannot move another app's icon, so it moves its own cut instead."
-                 + " To change which side an app falls on, Command-drag that icon in the"
-                 + " menu bar itself.")
+            Text("Stow moves only the apps you choose, verifies the result, and restores"
+                 + " the previous layout if macOS refuses any part of the change.")
                 .font(.system(size: 11))
                 .foregroundStyle(StowTheme.inkMuted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -516,7 +510,6 @@ private struct ArrangeContentView: View {
                                       zones: { store.config.zone(forBundleID: $0) },
                                       placementFloor: hider.placementFloor)
         let collateral = Set(outcome.collateral)
-        let overVaulted = Set(outcome.overVaulted)
         let belowFloor = Set(outcome.belowPlacementFloor)
 
         return VStack(alignment: .leading, spacing: 10) {
@@ -532,7 +525,6 @@ private struct ArrangeContentView: View {
                             widthPt: candidate.widthPt,
                             isOnBarNow: candidate.isOnBarNow,
                             isCollateral: collateral.contains(candidate.plan.bundleID),
-                            isOverVaulted: overVaulted.contains(candidate.plan.bundleID),
                             isBelowFloor: belowFloor.contains(candidate.plan.bundleID))
                     },
                     zoneOf: { store.config.zone(forBundleID: $0) },
@@ -549,12 +541,6 @@ private struct ArrangeContentView: View {
             // read as a footnote, which is how an app the user never touched came to be hidden
             // with the explanation off the bottom of the pane.
             //
-            // COLLATERAL ONLY APPLIES TO THE SEAM-MOVING PATH. A seam sweeps everything to its
-            // left, so placing one to hide an app takes that app's neighbours with it, and these
-            // banners exist to explain that. When apps are moved around a stationary seam
-            // instead, nothing is swept by accident, so showing the warning would be describing
-            // a consequence that no longer happens. The vault still uses the old path, so the
-            // warnings still show for a config that uses it.
             if !arrangeFailures.isEmpty {
                 consequenceBanner(
                     count: arrangeFailures.count,
@@ -570,19 +556,9 @@ private struct ArrangeContentView: View {
         }
     }
 
-    /// One app, one three-way zone picker.
-    ///
-    /// A picker rather than the checkbox this pane used to show, because there are three
-    /// zones and a checkbox can only say two things. Design §4's names, in the order the
-    /// bar reads them from the right: pinned stays, tucked comes back on a reveal, vaulted
-    /// stays away until asked for.
-    ///
-    /// The choice is a PREFERENCE, not a switch. Two seams cannot express an arbitrary
-    /// assignment, so an app can end up in a deeper zone than the one chosen, and the row
-    /// says so in place rather than letting the user find out after applying.
+    /// Legacy row renderer retained for compact layouts.
     private func zoneRow(_ candidate: AppCandidate,
                          isCollateral: Bool,
-                         isOverVaulted: Bool,
                          hiddenAtRest: Bool) -> some View {
         let bundle = candidate.plan.bundleID
         let zone = store.config.zone(forBundleID: bundle)
@@ -614,11 +590,6 @@ private struct ArrangeContentView: View {
                     .foregroundStyle(StowTheme.orange)
                     .help("Sits left of a seam your other choices require."
                           + " Command-drag it right of that seam in the menu bar to keep it.")
-            } else if isOverVaulted {
-                Text("vaulted anyway")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(StowTheme.orange)
-                    .help("Sits left of the vault seam, so a reveal will not bring it back.")
             } else if !candidate.isOnBarNow {
                 Text("off the bar")
                     .font(.system(size: 10))
@@ -789,24 +760,22 @@ private struct ArrangeContentView: View {
 
     /// Applies the zones, and offers the reveal.
     ///
-    /// Two controls, because there are now three states and Apply only reaches one of them.
-    /// The reveal is the everyday gesture design §8 describes: tucked items come back for a
-    /// moment while vaulted ones stay away.
+    /// Apply plus the everyday open/close action.
     private func applyRow(outcome: BarPlan.Outcome) -> some View {
-        let nothingHidden = outcome.tuckedBoundaryX == nil && outcome.vaultBoundaryX == nil
+        let nothingHidden = outcome.tuckedBoundaryX == nil
         let unsafe = !outcome.isSafeToApply
         return HStack(spacing: 10) {
-            Button(unsafe ? "Move icons first" : (nothingHidden ? "Show everything" : "Apply")) {
+            Button(unsafe ? "Unavailable app" : (nothingHidden ? "Show everything" : "Apply")) {
                 apply(outcome: outcome)
             }
             .disabled(movingCut || unsafe)
 
-            Button(hider.presentation == .revealed ? "Hide again" : "Reveal tucked") {
+            Button(hider.presentation == .revealed ? "Close Stow" : "Open Stow") {
                 hider.toggle()
                 Task { @MainActor in await rescan() }
             }
             .disabled(movingCut || nothingHidden || unsafe)
-            .help("Brings tucked items back without disturbing the vault")
+            .help("Temporarily returns apps in Stow to the menu bar")
 
             if movingCut {
                 ProgressView().controlSize(.small).tint(StowTheme.blue)
@@ -818,11 +787,9 @@ private struct ArrangeContentView: View {
         .padding(.top, 4)
     }
 
-    /// Where the two seams are, in one line.
+    /// Where the boundary is, in one line.
     private func seamSummary(_ outcome: BarPlan.Outcome) -> String {
-        let tucked = cutX.map { "tuck seam x\(Int($0))" } ?? "tuck seam not placed"
-        guard outcome.vaultBoundaryX != nil else { return tucked + " · no vault" }
-        return tucked + " · vault in use"
+        cutX.map { "boundary x\(Int($0))" } ?? "boundary not placed"
     }
 
     /// Apple's own items, collapsed to ONE line.
@@ -929,12 +896,10 @@ private struct ArrangeContentView: View {
             // change, the first arrange MOVED `com.notebuddy.app` back onto the bar: it was
             // pinned, it had been swept, and nothing in the seam-moving path could recover it.
             //
-            // FALLS BACK for the vault. `BarArranger` expresses one boundary, so a vaulted app
-            // would be treated as merely tucked and would come back on a reveal, silently
-            // breaking the promise the vault makes. Until it handles the second boundary, a
-            // config using the vault takes the old path.
             let outcome = hider.arrangeByMovingItems(from: store.config)
-            arrangeFailures = outcome.failed.map { "\($0.bundleID): \($0.reason)" }
+            arrangeFailures = outcome.failed.map {
+                $0.userMessage(displayName: Self.displayName(forBundleID:))
+            }
             cutX = hider.measuredCutX()
 
             // Reuse the walk the apply just took. See `rescan(reusingOwners:)`.
@@ -958,6 +923,7 @@ private struct ArrangeContentView: View {
     ///   leaves this false and walks.
     private func rescan(reusingOwners: Bool = false) async {
         guard let screen else { scan = nil; budget = nil; return }
+        store.pruneUnavailableApps()
         let barRect = BarScanner.menuBarRect(for: screen)
         let notch = BarScanner.notchWidth(for: screen)
         let result = BarScanner.scan(menuBarRect: barRect)
@@ -992,7 +958,7 @@ private struct ArrangeContentView: View {
         let appMenus = MenuWidthProbe.measureFrontmostAppMenuWidth()
         let systemTrailing = MenuWidthProbe.measureSystemTrailingWidth()
 
-        // Resolve BOTH seams FIRST, because the budget below has to exclude them.
+        // Resolve Stow's seam first, because the budget below has to exclude it.
         seamWindows = hider.seamWindowNumbers()
         let seamIDs = seamWindows
 

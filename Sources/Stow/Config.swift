@@ -50,9 +50,9 @@ struct Config: Codable, Equatable, Sendable {
         /// contract.
         var spacerLength: Double
         /// How many of the tucked items, counted out from the spacer, should stay
-        /// reachable from the sub-bar rather than falling all the way to vaulted.
-        /// Zero means "hide the whole run"; a large number means "keep everything
-        /// one hotkey away." Still a depth, not an app list: which apps currently sit
+        /// reachable in a profile-specific reveal. Zero means "hide the whole run";
+        /// a large number means "keep everything one action away." Still a depth,
+        /// not an app list: which apps currently sit
         /// in the tucked run is `appZones` below (or the default spacer position when
         /// unset); this field only says how deep a reveal should go.
         var tuckedRunDepth: Int
@@ -262,11 +262,10 @@ struct Config: Codable, Equatable, Sendable {
 
     /// The zone a given app's status item belongs in. Unassigned means `.pinned`: an
     /// item Stow has not been told to move must stay exactly where macOS already put
-    /// it, not be swept into `.tucked` or `.vaulted` by a default that looks like an
+    /// it, not be moved into `.tucked` by a default that looks like an
     /// assignment nobody made.
     func zone(forBundleID bundleID: String) -> Zone {
-        let stored = zoneByBundleID?[bundleID] ?? .pinned
-        return stored == .vaulted ? .tucked : stored
+        zoneByBundleID?[bundleID] ?? .pinned
     }
 
     /// Whether the zones ask for ANYTHING to be hidden, which decides whether resting the bar is the
@@ -283,8 +282,21 @@ struct Config: Codable, Equatable, Sendable {
     /// Records `zone` for `bundleID`, creating the map on its first use.
     mutating func setZone(_ zone: Zone, forBundleID bundleID: String) {
         var current = zoneByBundleID ?? [:]
-        current[bundleID] = zone == .vaulted ? .tucked : zone
+        current[bundleID] = zone
         zoneByBundleID = current
+    }
+
+    /// Removes apps that are no longer installed or running.
+    ///
+    /// The availability decision is injected so the migration is unit-testable without
+    /// Launch Services. Returns the identifiers removed so `BarHomes` can forget them too.
+    @discardableResult
+    mutating func pruneUnavailableApps(isAvailable: (String) -> Bool) -> [String] {
+        guard var zones = zoneByBundleID else { return [] }
+        let removed = zones.keys.filter { !isAvailable($0) }.sorted()
+        for bundleID in removed { zones.removeValue(forKey: bundleID) }
+        zoneByBundleID = zones.isEmpty ? nil : zones
+        return removed
     }
 
     // MARK: - Persistence

@@ -8,8 +8,8 @@ It uses two plain zones:
 - **On Bar**: always visible.
 - **In Stow**: hidden until opened.
 
-The app deliberately fails open. If a requested arrangement would hide an app
-that was not selected, Stow leaves the menu bar visible instead of applying it.
+The app deliberately fails open. Every arrangement is verified after moving; if
+any selected app does not land, Stow rolls completed moves back and shows everything.
 
 ## Identity
 
@@ -32,6 +32,8 @@ The behavior-first icon study is available at
 
 Stow uses Accessibility to identify and move status items. It does not require
 Screen Recording.
+
+`Command-Shift-Escape` is the global emergency shortcut for **Show Everything**.
 
 ## Build And Install
 
@@ -70,9 +72,9 @@ macOS has no public API for hiding another application's status item. Stow keeps
 a narrow status item at a stable boundary and moves selected app icons around
 that boundary with targeted Command-drag events.
 
-Before applying an arrangement, Stow verifies that only selected apps would
-leave the visible bar. Unsafe or unrepresentable layouts are rejected and the
-bar is restored.
+Stow snapshots the requested sides, moves only the apps that need changing, then
+scans the bar again. A failed move or verification mismatch reverses completed
+moves and rests the boundary so the entire menu bar remains visible.
 
 ## Repository
 

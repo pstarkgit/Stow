@@ -27,15 +27,33 @@ import AppKit
 /// zone to a live window is resolved fresh on every arrange, never stored.
 @MainActor
 enum BarArranger {
+    private struct ExpectedPosition {
+        let bundleID: String
+        let windowID: CGWindowID
+        let wantsRight: Bool
+    }
 
     /// What one arrange did, for the caller to report or act on.
     struct Outcome {
+        struct Failure {
+            let bundleID: String?
+            let reason: String
+            let recovery: String
+
+            func userMessage(displayName: (String) -> String) -> String {
+                let subject = bundleID.map(displayName) ?? "Stow"
+                return "\(subject): \(reason) \(recovery)"
+            }
+        }
+
         /// Apps moved across the seam, by bundle identifier.
         var moved: [String] = []
         /// Apps already on the correct side, so nothing was spent on them.
         var alreadyCorrect: [String] = []
         /// Apps that should have moved and did not, with why.
-        var failed: [(bundleID: String, reason: String)] = []
+        var failed: [Failure] = []
+        /// True when completed moves were reversed because the transaction did not verify.
+        var rolledBack = false
         /// Total time in the moves themselves.
         var cost: TimeInterval = 0
 
@@ -79,7 +97,10 @@ enum BarArranger {
 
         let items = ItemMover.positionableItems()
         guard let seamWindowID = seamWindow() else {
-            outcome.failed.append((bundleID: "-", reason: "the seam has no window yet"))
+            outcome.failed.append(Outcome.Failure(
+                bundleID: nil,
+                reason: "the menu-bar boundary is not ready.",
+                recovery: "Choose Show Everything, then try again."))
             return outcome
         }
         guard let seamIndex = items.firstIndex(where: { $0.windowNumber == seamWindowID }) else {
@@ -100,7 +121,10 @@ enum BarArranger {
                 detail = "the scan did not see win\(seamWindowID) at all;"
                        + " it returned \(unfiltered.count) window(s) at bar level"
             }
-            outcome.failed.append((bundleID: "-", reason: "seam not positionable: \(detail)"))
+            outcome.failed.append(Outcome.Failure(
+                bundleID: nil,
+                reason: "the menu-bar boundary could not be verified (\(detail)).",
+                recovery: "Choose Show Everything, then try again."))
             return outcome
         }
 
@@ -116,9 +140,10 @@ enum BarArranger {
         // inherit ITS grant, so they work while the app itself has none. Measured: that trap cost
         // twenty minutes once already.
         guard PressActionProbe.isTrusted else {
-            outcome.failed.append((bundleID: "-",
-                                   reason: "no Accessibility grant, so no item can be attributed"
-                                         + " to an app and nothing can be arranged"))
+            outcome.failed.append(Outcome.Failure(
+                bundleID: nil,
+                reason: "Accessibility access is off, so apps cannot be moved safely.",
+                recovery: "Enable Stow in System Settings > Privacy & Security > Accessibility."))
             return outcome
         }
 
@@ -129,9 +154,10 @@ enum BarArranger {
         let ownBundle = Bundle.main.bundleIdentifier
 
         guard !claims.isEmpty else {
-            outcome.failed.append((bundleID: "-",
-                                   reason: "the owner walk resolved nothing, so no item can be"
-                                         + " matched to an app"))
+            outcome.failed.append(Outcome.Failure(
+                bundleID: nil,
+                reason: "no menu-bar apps could be identified.",
+                recovery: "Choose Show Everything, reopen Arrange, and try again."))
             return outcome
         }
 
@@ -154,10 +180,8 @@ enum BarArranger {
         // Resolving once removes the dependency on accessibility freshness entirely, and it also
         // removes an owner walk per move, which cost about 0.26s each.
         //
-        // The vault is not handled here. It needs a second boundary and the same treatment
-        // relative to the vault seam, and shipping half of that would leave vaulted apps
-        // silently treated as tucked.
         var toMove: [(bundleID: String, windowID: CGWindowID, hostPID: pid_t, wantsRight: Bool)] = []
+        var expectations: [ExpectedPosition] = []
         var unresolved = 0
 
         // A TOTAL BUDGET, because there was none and the arithmetic was alarming.
@@ -191,6 +215,10 @@ enum BarArranger {
                   owner.bundleID != ownBundle else { continue }
 
             let wantsRight = config.zone(forBundleID: owner.bundleID) == .pinned
+            expectations.append(ExpectedPosition(
+                bundleID: owner.bundleID,
+                windowID: item.windowNumber,
+                wantsRight: wantsRight))
             if wantsRight == (index > seamIndex) {
                 outcome.alreadyCorrect.append(owner.bundleID)
             } else {
@@ -198,6 +226,8 @@ enum BarArranger {
             }
         }
 
+        var completed: [(bundleID: String, windowID: CGWindowID,
+                         hostPID: pid_t, originalWantsRight: Bool)] = []
         for (bundleID, windowID, hostPID, wantsRight) in toMove {
             guard Date() < deadline else {
                 abandoned.append(bundleID)
@@ -211,9 +241,10 @@ enum BarArranger {
             // closure rather than a number. The items being moved are not recreated, which the
             // id-stability test above settles, so they need no such treatment.
             guard let liveSeamID = seamWindow() else {
-                outcome.failed.append((bundleID: bundleID,
-                                       reason: "the seam has no live window, so the side to move"
-                                             + " to cannot be expressed"))
+                outcome.failed.append(Outcome.Failure(
+                    bundleID: bundleID,
+                    reason: "the Stow boundary disappeared during the move.",
+                    recovery: "Choose Show Everything, then try again."))
                 continue
             }
 
@@ -225,26 +256,121 @@ enum BarArranger {
                                    to: destination,
                                    hostPID: hostPID)
                 outcome.moved.append(bundleID)
+                completed.append((bundleID, windowID, hostPID, !wantsRight))
             } catch {
-                outcome.failed.append((bundleID: bundleID, reason: "\(error)"))
+                outcome.failed.append(Outcome.Failure(
+                    bundleID: bundleID,
+                    reason: friendlyMoveReason(error),
+                    recovery: "Try again; if it repeats, Command-drag that icon across Stow."))
             }
         }
 
         // An unresolved item is not a clean arrange. Saying so is what stops a silent skip being
         // read as success, which is exactly how a tucked app stayed visible with nothing reported.
         if unresolved > 0 {
-            outcome.failed.append((bundleID: "-",
-                                   reason: "\(unresolved) item(s) could not be matched to an app,"
-                                         + " so their side was never checked"))
+            outcome.failed.append(Outcome.Failure(
+                bundleID: nil,
+                reason: "\(unresolved) menu-bar item(s) could not be identified, so the result"
+                    + " could not be verified.",
+                recovery: "Choose Show Everything and reopen Arrange."))
         }
         for bundleID in abandoned {
-            outcome.failed.append((bundleID: bundleID,
-                                   reason: "the arrange ran out of its"
-                                         + " \(Int(totalBudget))s budget before reaching this app"))
+            outcome.failed.append(Outcome.Failure(
+                bundleID: bundleID,
+                reason: "the move took longer than Stow's \(Int(totalBudget))-second safety budget.",
+                recovery: "Try again after the menu bar settles."))
+        }
+
+        if outcome.failed.isEmpty {
+            let verification = verificationFailures(
+                expectations: expectations,
+                seamWindow: seamWindow)
+            outcome.failed.append(contentsOf: verification)
+        }
+
+        // A transaction is all-or-nothing. If any move or fresh verification failed, put every
+        // app already moved back on its original side before the caller is allowed to hide.
+        if !outcome.failed.isEmpty, !completed.isEmpty {
+            for move in completed.reversed() {
+                guard let liveSeamID = seamWindow() else {
+                    outcome.failed.append(Outcome.Failure(
+                        bundleID: move.bundleID,
+                        reason: "Stow could not restore this app because its boundary disappeared.",
+                        recovery: "Use Show Everything and Command-drag the icon back if needed."))
+                    continue
+                }
+                let destination: ItemMover.Destination = move.originalWantsRight
+                    ? .rightOf(liveSeamID)
+                    : .leftOf(liveSeamID)
+                do {
+                    try ItemMover.move(windowID: move.windowID,
+                                       to: destination,
+                                       hostPID: move.hostPID)
+                } catch {
+                    outcome.failed.append(Outcome.Failure(
+                        bundleID: move.bundleID,
+                        reason: "automatic rollback was refused by macOS.",
+                        recovery: "Use Show Everything and Command-drag the icon back if needed."))
+                }
+            }
+            outcome.rolledBack = true
+            outcome.moved.removeAll()
         }
 
         outcome.cost = Date().timeIntervalSince(began)
         return outcome
+    }
+
+    private static func verificationFailures(
+        expectations: [ExpectedPosition],
+        seamWindow: () -> CGWindowID?
+    ) -> [Outcome.Failure] {
+        let items = ItemMover.positionableItems()
+        guard let seamID = seamWindow(),
+              let seamIndex = items.firstIndex(where: { $0.windowNumber == seamID }) else {
+            return [Outcome.Failure(
+                bundleID: nil,
+                reason: "the final menu-bar layout could not be verified.",
+                recovery: "Choose Show Everything, then try again.")]
+        }
+        var failures: [Outcome.Failure] = []
+        for expectation in expectations {
+            guard let index = items.firstIndex(where: {
+                $0.windowNumber == expectation.windowID
+            }) else {
+                failures.append(Outcome.Failure(
+                    bundleID: expectation.bundleID,
+                    reason: "its menu-bar item disappeared during verification.",
+                    recovery: "Stow restored the previous layout; try again."))
+                continue
+            }
+            guard expectation.wantsRight != (index > seamIndex) else { continue }
+            failures.append(Outcome.Failure(
+                bundleID: expectation.bundleID,
+                reason: expectation.wantsRight
+                    ? "it did not return to the visible side."
+                    : "it did not reach In Stow.",
+                recovery: "Stow restored the previous layout; try again."))
+        }
+        return failures
+    }
+
+    private static func friendlyMoveReason(_ error: Error) -> String {
+        guard let failure = error as? ItemMover.Failure else {
+            return "macOS refused the move."
+        }
+        switch failure {
+        case .noAccessibility:
+            return "Accessibility access is off."
+        case .modifiersHeld:
+            return "a modifier key is currently held."
+        case .mouseButtonHeld:
+            return "a mouse drag is currently in progress."
+        case .didNotLand:
+            return "macOS did not place the icon on the requested side."
+        default:
+            return "the icon was not available to move."
+        }
     }
 
     /// How late a NEW move may START. Not a bound on the whole arrange, and the difference matters.
@@ -300,7 +426,8 @@ enum BarArranger {
         append("\(context)"
                + "  moved=\(outcome.moved.joined(separator: ","))"
                + "  correct=\(outcome.alreadyCorrect.count)"
-               + "  failed=\(outcome.failed.map { "\($0.bundleID)(\($0.reason))" }.joined(separator: "; "))"
+               + "  failed=\(outcome.failed.map { "\($0.bundleID ?? "-")(\($0.reason))" }.joined(separator: "; "))"
+               + "  rolledBack=\(outcome.rolledBack)"
                + "  cost=\(String(format: "%.2f", outcome.cost))s")
     }
 

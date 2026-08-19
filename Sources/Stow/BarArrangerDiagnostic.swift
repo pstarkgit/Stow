@@ -97,7 +97,7 @@ extension BarArranger {
         } else {
             print("  NOT CLEAN, so this is not ready to replace the shipped path:")
             for f in first.failed + second.failed {
-                print("    \(f.bundleID): \(f.reason)")
+                print("    \(f.bundleID ?? "Stow"): \(f.reason)")
             }
         }
         exit(0)
@@ -112,7 +112,7 @@ extension BarArranger {
             print("      moved    \(bundle)")
         }
         for f in outcome.failed {
-            print("      FAILED   \(f.bundleID): \(f.reason)")
+            print("      FAILED   \(f.bundleID ?? "Stow"): \(f.reason)")
         }
     }
 

@@ -185,14 +185,10 @@ import Testing
     #expect(cfg.hidesAnything == false)
 }
 
-@Test func aTuckedOrVaultedAppMeansSomethingIsHidden() {
+@Test func aTuckedAppMeansSomethingIsHidden() {
     var tucked = Config.default
     tucked.zoneByBundleID = ["us.zoom.xos": .tucked]
     #expect(tucked.hidesAnything)
-
-    var vaulted = Config.default
-    vaulted.zoneByBundleID = ["us.zoom.xos": .vaulted]
-    #expect(vaulted.hidesAnything)
 
     // Mixed, which is the ordinary real case: one pinned app must not mask a tucked one.
     var mixed = Config.default

@@ -25,13 +25,12 @@ final class HideController: ObservableObject {
 
     /// What the bar is showing right now.
     ///
-    /// Three zones need three states, not a boolean. The old `isHidden` flag could not
-    /// express the one that makes the design worth having: tucked items back on the bar
-    /// while vaulted ones stay away.
+    /// The explicit `.revealed` state records that the user opened Stow, even though it
+    /// has the same visible geometry as `.everything`.
     enum Presentation: Equatable, Sendable {
-        /// Pinned items only. Both tucked and vaulted are off the bar. The resting state.
+        /// Only apps assigned On Bar are visible. The resting state.
         case tidy
-        /// Pinned and tucked visible, vaulted still off. What a reveal produces.
+        /// Apps in Stow are temporarily visible because the user opened Stow.
         case revealed
         /// Everything on the bar, no seam expanded. What the user gets by pinning
         /// everything, and what Stow falls back to when it has nothing to hide.
@@ -40,7 +39,7 @@ final class HideController: ObservableObject {
 
     @Published private(set) var presentation: Presentation = .everything
 
-    /// The leftmost position a seam can be placed at, measured while both seams rest.
+    /// The leftmost position a seam can be placed at, measured while the seam rests.
     ///
     /// Published so the Arrange pane can name the apps below it. Two apps both sitting left
     /// of this cannot be separated into different zones, however the user sets them, because
@@ -52,20 +51,6 @@ final class HideController: ObservableObject {
     /// control still reads as a two-way toggle, and because every existing caller asks
     /// this question rather than which of three states applies.
     var isHidden: Bool { presentation != .everything }
-
-    /// Whether the VAULT boundary is actually carrying anything.
-    ///
-    /// Load-bearing for `reveal()`, and its absence was a real bug that broke the panel's
-    /// primary button. `reveal()` expands the vault seam so vaulted items stay away while
-    /// tucked ones return. But a vault seam is only ever POSITIONED when the plan has
-    /// something to vault; with an empty vault it sits at its default placement of 260, which
-    /// measured around x1230 on the built-in display. Expanding an unpositioned seam there
-    /// pushes everything to its left off the bar, which is every app.
-    ///
-    /// Measured with one app tucked and nothing vaulted: `--apply` reported five pinned apps
-    /// off the bar in the REVEALED state, every one of them an unexplained mismatch. Pressing
-    /// "Reveal tucked" cleared the bar instead of restoring it.
-    private var vaultIsCarrying = false
 
     /// Where phase timings go, when anyone is listening.
     ///
@@ -123,9 +108,7 @@ final class HideController: ObservableObject {
     /// Measured placement floors, keyed on display frame. See `prepareAndVerifyPlacement`.
     private var floorByDisplay: [String: CGFloat] = [:]
 
-    /// The two seams, one per boundary. Created once and kept for the process lifetime:
-    /// dropping one while items are hidden behind it would strand them off-screen with
-    /// nothing able to bring them back.
+    /// The single seam. Kept for the process lifetime so hidden apps cannot be stranded.
     private var seams: [SpacerItem.Boundary: SpacerItem] = [:]
 
     /// How wide to make a seam when it is pushing. A request, not a guarantee: the window
@@ -134,7 +117,7 @@ final class HideController: ObservableObject {
     /// measured shortfall would not be, since the clamp is not a documented number.
     private static let pushWidth: CGFloat = 10_000
 
-    /// Places Stow's own menu bar token outside BOTH seams.
+    /// Places Stow's own menu bar token outside the seam.
     ///
     /// MUST run before the token is created, which for a `MenuBarExtra` means before the
     /// scene body is first evaluated. AppKit reads this preference when the item is made;
@@ -162,7 +145,7 @@ final class HideController: ObservableObject {
     /// `nonisolated(unsafe)`, which would only assert it.
     nonisolated static let tokenOffsetFromRightEdge = 2
 
-    /// Creates both seams at rest, so they are placed and ready before any hide.
+    /// Creates the seam at rest, so it is placed and ready before any hide.
     ///
     /// At launch rather than on first hide, deliberately. Placement is read from a
     /// preference at CREATION time, so a seam created lazily during the first hide would
@@ -176,7 +159,7 @@ final class HideController: ObservableObject {
         }
     }
 
-    /// The seam for a boundary, creating both if needed.
+    /// The seam for the boundary, creating it if needed.
     private func seam(_ boundary: SpacerItem.Boundary) -> SpacerItem? {
         prepare()
         return seams[boundary]
@@ -216,7 +199,7 @@ final class HideController: ObservableObject {
     func prepareAndVerifyPlacement(repairStrandedSeam: Bool = true) -> CGFloat? {
         prepare()
 
-        // Force BOTH seams to REST before measuring anything.
+        // Force the seam to rest before measuring anything.
         //
         // A seam left expanded from a previous session, or by a bug, measures a left edge of
         // about -2700 on a 2560pt bar, because the item is ~5000pt wide. Every comparison
@@ -233,7 +216,7 @@ final class HideController: ObservableObject {
             !VisibleRowIdentity.cannotBeAddressedIndividually($0.bundleID) && $0.bundleID != ownBundle
         }
 
-        // Measure the placement floor HERE, and only here: both seams have just been rested
+        // Measure the placement floor HERE, and only here: the seam has just been rested
         // and `awaitMeasuredFrame` has already spun the run loop, so the bar has had a chance
         // to lay out with everything visible.
         //
@@ -295,43 +278,21 @@ final class HideController: ObservableObject {
 
     // MARK: - the three states
 
-    /// Pinned only: both tucked and vaulted off the bar.
-    ///
-    /// Expands the TUCKED seam, which is the outer of the two, so everything to its left
-    /// goes: the tucked run, the vault seam, and the vaulted run with it.
+    /// Apps assigned On Bar only.
     func tidy() {
         prepare()
         seams[.tucked]?.expand(toPush: Self.pushWidth)
-        seams[.vaulted]?.expand(toPush: SpacerItem.restingLength)
         presentation = .tidy
     }
 
-    /// Tucked items back on the bar, vaulted still away.
-    ///
-    /// The whole point of the second seam, and the state a single seam could not express.
-    /// Rest the tucked seam so its run returns, and expand the VAULT seam so the run
-    /// behind it does not come back with it.
-    ///
-    /// Verified with two real seams: with the tucked seam at rest and the vault expanded,
-    /// the tucked seam measured back at x2293 while the vault sat at x-2851, pushing only
-    /// what was left of it.
-    ///
-    /// The vault seam only pushes when the vault is CARRYING something. Expanding it
-    /// unconditionally was a bug, not a simplification: a vault seam is only positioned when
-    /// the plan has something to vault, so with an empty vault it sits at its default
-    /// placement and expanding it there sweeps the whole bar. Measured with one app tucked and
-    /// nothing vaulted, `--apply` reported five pinned apps off the bar in this state, so the
-    /// panel's "Reveal tucked" button emptied the bar instead of restoring it.
+    /// Temporarily shows the apps in Stow.
     func reveal() {
         prepare()
         seams[.tucked]?.expand(toPush: SpacerItem.restingLength)
-        seams[.vaulted]?.expand(toPush: vaultIsCarrying
-                                ? Self.pushWidth
-                                : SpacerItem.restingLength)
         presentation = .revealed
     }
 
-    /// Everything on the bar. Both seams at rest, pushing nothing.
+    /// Everything on the bar. The seam rests and pushes nothing.
     func showEverything() {
         prepare()
         for seam in seams.values { seam.expand(toPush: SpacerItem.restingLength) }
@@ -380,7 +341,7 @@ final class HideController: ObservableObject {
         return true
     }
 
-    /// Restores the user's saved zones: places both seams and re-hides what was hidden.
+    /// Legacy seam-placement diagnostic retained for command-line measurements.
     ///
     /// Without this, quitting Stow silently undoes every choice. A fresh process creates
     /// seams at rest, so the bar comes back fully visible and every zone the user set is a
@@ -417,7 +378,7 @@ final class HideController: ObservableObject {
         prepareAndVerifyPlacement(repairStrandedSeam: false)
         mark("rest + floor           ")
 
-        // Re-record homes NOW, with both seams rested and every app visible.
+        // Re-record homes NOW, with the seam rested and every app visible.
         //
         // Without this the plan is computed from positions recorded before the seams existed,
         // and each seam adds ~17pt to the bar, so every stored home is stale by about one
@@ -443,37 +404,23 @@ final class HideController: ObservableObject {
         mark("plan                  ")
 
         // FAIL OPEN. A seam is geometric: it pushes every item to its left. If the plan says
-        // that includes a pinned app, or that a tucked app would actually be vaulted, applying
-        // it anyway hides something the user did not choose. The Arrange pane used to warn
+        // that includes a pinned app, applying it anyway hides something the user did not
+        // choose. The Arrange pane used to warn
         // about that and proceed; the live result was an apparently empty menu bar.
         guard plan.isSafeToApply else {
-            vaultIsCarrying = false
             showEverything()
             mark("unsafe plan refused   ")
             timingSink?("  TOTAL: \(String(format: "%.2f", Date().timeIntervalSince(began)))s")
             return measuredCutX()
         }
 
-        // Record whether the vault has anything behind it, because `reveal()` must not expand
-        // an unpositioned vault seam. Set from the PLAN rather than from the config: a bundle
-        // marked vaulted that Stow has never seen on the bar yields no boundary, so the seam
-        // stays unpositioned and expanding it would still sweep the bar.
-        vaultIsCarrying = plan.vaultBoundaryX != nil
-
-        guard plan.tuckedBoundaryX != nil || plan.vaultBoundaryX != nil else {
-            // Nothing is hidden in either zone, so leave the bar alone rather than expanding
+        guard plan.tuckedBoundaryX != nil else {
+            // Nothing is hidden, so leave the bar alone rather than expanding
             // a seam that has nothing to push.
             showEverything()
             return measuredCutX()
         }
 
-        // Place the OUTER seam first, then RE-MEASURE before placing the inner one.
-        //
-        // Re-measuring is not caution, it is required. Inserting a seam adds ~17pt of item to
-        // the bar, so every item left of it shifts. A vault target computed before that
-        // insertion is stale by roughly one item's width, which is the same order as the gap
-        // between two adjacent apps: measured, a vault seam aimed at x1943 from stale
-        // positions and the app it was meant to sit beside had already moved.
         // AIM PAST THE APP'S OWN WIDTH, exactly as the correction pass does.
         //
         // `tuckedBoundaryX` is the rightmost hidden app's LEFT edge, because `homeX` is an
@@ -491,21 +438,6 @@ final class HideController: ObservableObject {
             landed = moveCut(toSitRightOf: target + Self.pushClearance, boundary: .tucked)
         }
         mark("move tuck seam        ")
-
-        if plan.vaultBoundaryX != nil {
-            // Fresh homes with the tuck seam now in place and both seams at rest, so every
-            // item reports where it really is.
-            BarHomes.record(BarItemOwners.refreshCache().filter {
-                !VisibleRowIdentity.cannotBeAddressedIndividually($0.bundleID) && $0.bundleID != ownBundle
-            })
-            let fresh = BarPlan.outcome(candidates: currentCandidates(), zones: zones)
-            if let target = fresh.vaultBoundaryX {
-                // Same clearance, same reason: a boundary is a left edge, and a seam has to
-                // clear the app's own width to push it.
-                _ = moveCut(toSitRightOf: target + Self.pushClearance, boundary: .vaulted)
-            }
-        }
-        mark("vault seam            ")
 
         tidy()
         mark("tidy                  ")
@@ -673,10 +605,7 @@ final class HideController: ObservableObject {
                              zone: zone,
                              pid: running.processIdentifier)
         }
-        // Tucked first, then vaulted, each right to left as the bar reads. The sub-bar draws
-        // them as two groups and this is the order within each.
         .sorted { lhs, rhs in
-            if lhs.zone != rhs.zone { return lhs.zone == .tucked }
             return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
         }
     }
@@ -726,11 +655,7 @@ final class HideController: ObservableObject {
         seams[boundary]?.measuredFrame()?.width
     }
 
-    /// BOTH seams' window numbers, so a bar listing can exclude them.
-    ///
-    /// Stow owns three items now: its token and two seams, and all three resolve through
-    /// `BarItemOwners` to the name "Stow". A list that does not filter them out shows Stow
-    /// three times and offers to zone the machinery doing the zoning.
+    /// The seam's window number, so bar listings can exclude Stow's machinery.
     func seamWindowNumbers() -> Set<CGWindowID> {
         var out: Set<CGWindowID> = []
         for seam in seams.values {
@@ -823,7 +748,7 @@ final class HideController: ObservableObject {
         prepare()
         let previous = presentation
 
-        // Everything visible, both seams at rest.
+        // Everything visible, with the seam at rest.
         //
         // And WAIT for the resting width to actually take effect, which is not the same as
         // waiting for the window to be findable. `showEverything` only sets `length`; the window
@@ -915,6 +840,13 @@ final class HideController: ObservableObject {
         // app itself may not share.
         BarArranger.log(outcome, context: "arrange from=\(previous)")
 
+        // FAIL VISIBLE. A failed or unverifiable transaction has already attempted rollback,
+        // but the only end state that never strands an app is a resting boundary.
+        guard outcome.isClean else {
+            showEverything()
+            return outcome
+        }
+
         // END IN A STATE THAT HONOURS THE ZONES, which is not the same as restoring `previous`.
         //
         // Restoring it verbatim was a real bug and it shipped for one build: at launch
@@ -973,7 +905,10 @@ final class HideController: ObservableObject {
                                began: Date,
                                config: Config) -> BarArranger.Outcome {
         var outcome = BarArranger.Outcome()
-        outcome.failed.append((bundleID: "-", reason: reason))
+        outcome.failed.append(.init(
+            bundleID: nil,
+            reason: reason,
+            recovery: "Choose Show Everything, then try again."))
         outcome.cost = Date().timeIntervalSince(began)
         BarArranger.log(outcome, context: "arrange from=\(previous)")
         switch previous {
@@ -1365,17 +1300,12 @@ extension HideController {
         print("    no slot exists between them, and com.example.vendoragent at x1181 was in the gap.")
 
         print("  apps Stow knows  : \(candidates.count)")
-        print("  shown / tucked / vaulted : \(byZone[.pinned]?.count ?? 0)"
-              + " / \(byZone[.tucked]?.count ?? 0) / \(byZone[.vaulted]?.count ?? 0)")
-        print("  tuck seam target : "
+        print("  on bar / in Stow : \(byZone[.pinned]?.count ?? 0)"
+              + " / \(byZone[.tucked]?.count ?? 0)")
+        print("  boundary target  : "
               + (outcome.tuckedBoundaryX.map { "x\(Int($0))" } ?? "none"))
-        print("  vault seam target: "
-              + (outcome.vaultBoundaryX.map { "x\(Int($0))" } ?? "none"))
         if !outcome.collateral.isEmpty {
             print("  collateral       : \(outcome.collateral.joined(separator: ", "))")
-        }
-        if !outcome.overVaulted.isEmpty {
-            print("  over-vaulted     : \(outcome.overVaulted.joined(separator: ", "))")
         }
         if !outcome.belowPlacementFloor.isEmpty {
             print("  below the floor  : "
@@ -1430,8 +1360,7 @@ extension HideController {
                   + (isVisible ? "on bar" : "off bar") + flag)
         }
 
-        // REVEALED state: pinned and tucked back, vaulted still away. The state a single
-        // seam could not express, so it is the one worth proving.
+        // REVEALED state: every configured app is back on the bar.
         hider.reveal()
         RunLoop.main.run(until: Date().addingTimeInterval(1.5))
         let revealedOnBar = Set(BarItemOwners.refreshCache().map(\.bundleID))
@@ -1441,18 +1370,9 @@ extension HideController {
         for candidate in candidates {
             let zone = zones(candidate.bundleID)
             let isVisible = revealedOnBar.contains(candidate.bundleID)
-            // Collateral is NOT excused here, and treating it as excused was a diagnostic bug
-            // that reported two false mismatches. Collateral means "swept off by the TUCKED
-            // seam despite being pinned", and in this state that seam is at REST, so those apps
-            // come back by definition. Expecting them to stay away made a correct reveal look
-            // broken. Only `overVaulted` genuinely stays away: those sit behind the vault seam,
-            // which is still expanded.
-            let excused = outcome.overVaulted.contains(candidate.bundleID)
-            let wantedVisible = zone != .vaulted && !excused
+            let wantedVisible = true
             if wantedVisible != isVisible { wrong += 1 }
-            let flag = wantedVisible == isVisible
-                ? (excused ? "   (warned: behind the vault)" : "")
-                : "   <- MISMATCH"
+            let flag = wantedVisible == isVisible ? "" : "   <- MISMATCH"
             print("  " + pad(candidate.bundleID, 34) + pad(zone.rawValue, 10)
                   + (isVisible ? "on bar" : "off bar") + flag)
         }

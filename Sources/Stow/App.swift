@@ -215,6 +215,11 @@ struct StowApp: App {
             // until the user first clicked. Learned from AuthBar's App.swift.
             Image(nsImage: StowGlyph.image(for: snapshot.state))
                 .task {
+                    EmergencyHotKey.shared.register {
+                        hider.showEverything()
+                        remeasure()
+                    }
+                    store.pruneUnavailableApps()
                     // Create the seam at LAUNCH, not on first panel open.
                     //
                     // Its placement is read from a preference at creation time, so

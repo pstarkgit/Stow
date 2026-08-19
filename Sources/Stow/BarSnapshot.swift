@@ -6,7 +6,7 @@ import SwiftUI
 /// how much room is left, and which state that implies.
 ///
 /// Deliberately thin. It owns no policy and persists nothing, because zone
-/// membership (`pinned`, `tucked`, `vaulted`) is a stored user decision and the
+/// membership (`pinned`, `tucked`) is a stored user decision and the
 /// subsystem that stores it does not exist yet. What it does own is the one job
 /// that IS answerable today: ask `BarScanner` what is on the bar, ask
 /// `MenuWidthProbe` for the two widths `BarBudget` used to receive as zero, and

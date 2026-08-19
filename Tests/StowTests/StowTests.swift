@@ -193,10 +193,8 @@ import CoreGraphics
 
 // MARK: - Zones
 
-@Test func vaultedNeedsNoDividerOfItsOwn() {
-    // Three zones, one spacer. If someone adds a fourth zone they must revisit
-    // SpacerItem, because position is the only thing macOS gives us.
-    #expect(Zone.allCases.count == 3)
+@Test func runtimeOffersExactlyTwoZones() {
+    #expect(Zone.allCases == [.pinned, .tucked])
 }
 
 // MARK: - MenuWidthProbe
@@ -599,7 +597,7 @@ private func makeOwner(name: String, pid: pid_t, axLeftEdge: CGFloat) -> BarItem
 
     var written = Config.default
     written.setZone(.tucked, forBundleID: "com.example.murmur")
-    written.setZone(.vaulted, forBundleID: "com.example.vpn")
+    written.setZone(.tucked, forBundleID: "com.example.vpn")
 
     try written.save(to: url)
     let loaded = Config.load(from: url)
@@ -608,9 +606,29 @@ private func makeOwner(name: String, pid: pid_t, axLeftEdge: CGFloat) -> BarItem
     #expect(loaded == written)
 }
 
+@Test func legacyVaultedZoneDecodesAsTuckedAndEncodesWithoutVault() throws {
+    let data = Data(#"{"zoneByBundleID":{"com.example.vpn":"vaulted"}}"#.utf8)
+    let loaded = try JSONDecoder().decode(Config.self, from: data)
+    #expect(loaded.zone(forBundleID: "com.example.vpn") == .tucked)
+    let encoded = String(decoding: try JSONEncoder().encode(loaded), as: UTF8.self)
+    #expect(!encoded.contains("vaulted"))
+}
+
+@Test func unavailableAppsArePrunedWithoutTouchingInstalledApps() {
+    var config = Config.default
+    config.zoneByBundleID = [
+        "com.example.installed": .tucked,
+        "com.example.removed": .tucked,
+    ]
+    let removed = config.pruneUnavailableApps { $0 == "com.example.installed" }
+    #expect(removed == ["com.example.removed"])
+    #expect(config.zone(forBundleID: "com.example.installed") == .tucked)
+    #expect(config.zoneByBundleID?["com.example.removed"] == nil)
+}
+
 @Test func anUnassignedBundleIDResolvesToPinnedRatherThanAnyOtherDefault() {
     // An item Stow has never been told to move must stay exactly where macOS
-    // already put it. Defaulting to .tucked or .vaulted would sweep every
+    // already put it. Defaulting to .tucked would move every
     // app Stow has never heard of into a zone nobody assigned it to.
     var config = Config.default
     #expect(config.zone(forBundleID: "com.example.neverassigned") == .pinned)
@@ -649,7 +667,7 @@ private func makeOwner(name: String, pid: pid_t, axLeftEdge: CGFloat) -> BarItem
 // These defend the one invariant whose violation cannot be undone by the user.
 //
 // A status item pushes only what is to its LEFT. So the bar must read, from the right edge
-// inwards: Stow's token, the TUCKED seam, the tucked run, the VAULT seam, the vaulted run.
+// inwards: Stow's token, the boundary, then the run in Stow.
 // Get that order wrong and expanding a seam pushes Stow's own token off with everything
 // else, leaving no control anywhere to bring the items back.
 //
@@ -665,14 +683,6 @@ private func makeOwner(name: String, pid: pid_t, axLeftEdge: CGFloat) -> BarItem
     for boundary in SpacerItem.Boundary.allCases {
         #expect(HideController.tokenOffsetFromRightEdge < boundary.defaultOffsetFromRightEdge)
     }
-}
-
-@Test func theTuckSeamSitsOutsideTheVaultSeam() {
-    // The tuck boundary is the OUTER of the two, so its offset is the smaller. If this
-    // inverts, expanding the tuck seam would no longer push the vaulted run, and a reveal
-    // would bring the vault back with the tucked items.
-    #expect(SpacerItem.Boundary.tucked.defaultOffsetFromRightEdge
-            < SpacerItem.Boundary.vaulted.defaultOffsetFromRightEdge)
 }
 
 @Test func everyPlacementIsInboardOfTheExtremeRightEdge() {
@@ -701,11 +711,9 @@ private func makeOwner(name: String, pid: pid_t, axLeftEdge: CGFloat) -> BarItem
                                               ownBundle: ownBundle))
 }
 
-@Test func theTwoSeamsNeverShareAnAutosaveName() {
-    // They persist their positions under these names. One name for both would make each
-    // seam overwrite the other's stored placement on every launch.
-    let names = Set(SpacerItem.Boundary.allCases.map(\.autosaveIdentity))
-    #expect(names.count == SpacerItem.Boundary.allCases.count)
+@Test func thereIsExactlyOnePersistedBoundary() {
+    #expect(SpacerItem.Boundary.allCases == [.tucked])
+    #expect(SpacerItem.Boundary.tucked.autosaveIdentity == "RailSpacer")
 }
 
 @Test func collapsingTheSeamNeverDragsTheHiddenRunBackAllAtOnce() {
@@ -803,10 +811,7 @@ private func item(_ x: CGFloat, width: CGFloat = 32, window: CGWindowID = 1) -> 
 
 // MARK: - BarPlan
 //
-// Where the TWO seams go, given per-app zones. Two seams cannot express an arbitrary
-// assignment, so these tests pin the reconciliation between what the user chose and what
-// geometry allows — including both cases the pane exists to warn about: a pinned app swept
-// off by someone else's seam, and a tucked app stranded behind the vault.
+// What the two-zone boundary means for per-app choices.
 
 private func app(_ bundle: String, _ homeX: CGFloat, pushable: Bool = true) -> BarPlan.Candidate {
     BarPlan.Candidate(bundleID: bundle, homeX: homeX, isPushable: pushable)
@@ -818,11 +823,10 @@ private func zoneTable(_ pairs: [String: Zone]) -> (String) -> Zone {
     { pairs[$0] ?? .pinned }
 }
 
-@Test func everythingPinnedNeedsNeitherSeam() {
+@Test func everythingPinnedNeedsNoBoundary() {
     let candidates = [app("a", 1729), app("b", 2171)]
     let outcome = BarPlan.outcome(candidates: candidates, zones: zoneTable([:]))
     #expect(outcome.tuckedBoundaryX == nil)
-    #expect(outcome.vaultBoundaryX == nil)
     #expect(outcome.hiddenAtRest.isEmpty)
 }
 
@@ -836,50 +840,14 @@ private func zoneTable(_ pairs: [String: Zone]) -> (String) -> Zone {
     #expect(outcome.isSafeToApply)
 }
 
-@Test func theTuckSeamMustAlsoClearVaultedApps() {
-    // The subtle one. A vaulted app is hidden at rest too, so a tuck seam placed only past
-    // the tucked run would leave the vaulted app to its RIGHT, where nothing pushes it and
-    // it would sit on the bar in the tidy state.
-    let candidates = [app("vault", 2093), app("tuck", 1873)]
-    let outcome = BarPlan.outcome(candidates: candidates,
-                                  zones: zoneTable(["vault": .vaulted, "tuck": .tucked]))
-    #expect(outcome.tuckedBoundaryX == 2093)
-    #expect(outcome.vaultBoundaryX == 2093)
-    #expect(Set(outcome.hiddenAtRest) == Set(["vault", "tuck"]))
-}
-
-@Test func theVaultSeamClearsOnlyTheVaultedRun() {
-    let candidates = [app("vault", 1729), app("tuck", 2093), app("pin", 2171)]
-    let outcome = BarPlan.outcome(candidates: candidates,
-                                  zones: zoneTable(["vault": .vaulted, "tuck": .tucked]))
-    #expect(outcome.vaultBoundaryX == 1729)
-    // Revealed shows pinned and tucked; only the vaulted app stays away.
-    #expect(outcome.hiddenWhenRevealed == ["vault"])
-}
-
 @Test func aPinnedAppLeftOfTheTuckSeamIsReportedAsCollateral() {
-    // Tucking only the rightmost app requires a seam past it, which sweeps the pinned ones
-    // on its left off too. Reporting that is the difference between a warning and a
-    // surprise.
+    // The active arranger moves only the selected app around a stationary boundary.
     let candidates = [app("pinA", 1729), app("pinB", 1873), app("tuck", 2093)]
     let outcome = BarPlan.outcome(candidates: candidates, zones: zoneTable(["tuck": .tucked]))
     #expect(outcome.tuckedBoundaryX == 2093)
     #expect(Set(outcome.hiddenAtRest) == Set(["pinA", "pinB", "tuck"]))
-    #expect(Set(outcome.collateral) == Set(["pinA", "pinB"]))
-    #expect(!outcome.isSafeToApply)
-}
-
-@Test func aTuckedAppLeftOfTheVaultSeamIsReportedAsOverVaulted() {
-    // The second warning, one zone deeper: a tucked app that sits left of the vault seam
-    // will not come back on a reveal, so calling it "tucked" without saying so is a lie.
-    let candidates = [app("tuck", 1729), app("vault", 2093)]
-    let outcome = BarPlan.outcome(candidates: candidates,
-                                  zones: zoneTable(["tuck": .tucked, "vault": .vaulted]))
-    #expect(outcome.vaultBoundaryX == 2093)
-    #expect(outcome.overVaulted == ["tuck"])
-    // And it is genuinely absent from the revealed bar, not merely flagged.
-    #expect(outcome.hiddenWhenRevealed.contains("tuck"))
-    #expect(!outcome.isSafeToApply)
+    #expect(outcome.collateral.isEmpty)
+    #expect(outcome.isSafeToApply)
 }
 
 @Test func zoningAnUnpushableAppNeverDragsASeamOnItsBehalf() {
@@ -911,23 +879,19 @@ private func zoneTable(_ pairs: [String: Zone]) -> (String) -> Zone {
     #expect(outcome.hiddenAtRest == ["hidden"])
 }
 
-@Test func rePinningTheLastHiddenAppClearsBothSeams() {
-    // The round trip: hide one, then bring it back. With everything pinned, neither seam is
-    // needed, which is what returns the bar to normal rather than leaving a seam expanded.
+@Test func rePinningTheLastHiddenAppClearsTheBoundary() {
     let candidates = [app("a", 2093), app("b", 2171)]
-    let hidden = BarPlan.outcome(candidates: candidates, zones: zoneTable(["a": .vaulted]))
+    let hidden = BarPlan.outcome(candidates: candidates, zones: zoneTable(["a": .tucked]))
     #expect(hidden.tuckedBoundaryX == 2093)
-    #expect(hidden.vaultBoundaryX == 2093)
     let restored = BarPlan.outcome(candidates: candidates, zones: zoneTable([:]))
     #expect(restored.tuckedBoundaryX == nil)
-    #expect(restored.vaultBoundaryX == nil)
 }
 
 @Test func hiddenListsAreOrderedRightToLeftLikeTheBar() {
     let candidates = [app("a", 1729), app("b", 1873), app("c", 2093)]
     let outcome = BarPlan.outcome(candidates: candidates, zones: zoneTable(["c": .tucked]))
     #expect(outcome.hiddenAtRest == ["c", "b", "a"])
-    #expect(outcome.collateral == ["b", "a"])
+    #expect(outcome.collateral.isEmpty)
 }
 
 // MARK: - the placement floor measurement

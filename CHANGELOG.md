@@ -13,6 +13,16 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.17
+
+- Stow now has exactly two runtime zones, On Bar and In Stow; old Deep Storage
+  assignments migrate safely into In Stow.
+- Arrangement changes are verified as one transaction and rolled back automatically
+  if any selected app fails to land.
+- Uninstalled apps are removed from Arrange automatically.
+- Press Command-Shift-Escape at any time to Show Everything.
+- Move failures now name the affected app and give one recovery action.
+
 ## 0.1.16
 
 - Enlarged and thickened the Stow menu-bar mark so it matches the visual weight

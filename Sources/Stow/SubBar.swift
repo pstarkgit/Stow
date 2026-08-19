@@ -83,7 +83,6 @@ private struct SubBarIcon: View {
                         Image(nsImage: icon)
                             .resizable()
                             .frame(width: 26, height: 26)
-                            .opacity(app.zone == .vaulted ? 0.75 : 1)
                     } else {
                         Image(systemName: "app.dashed")
                             .font(.system(size: 16))

@@ -1,13 +1,7 @@
 import AppKit
 import CoreGraphics
 
-/// The single seam that stands between the pinned run and everything Stow has
-/// tucked or vaulted off the bar. Design §4: exactly ONE `NSStatusItem`, never
-/// three, because v1's three dividers cost three slots on a bar that has none.
-/// `vaulted` needs no divider of its own since it is simply further left than
-/// any reveal depth reaches; `tucked` sits between this seam and the pinned
-/// run, so pushing this item wide enough shoves the whole tucked run off the
-/// bar in one move.
+/// The single seam between apps that stay on the bar and apps placed in Stow.
 ///
 /// Owns no policy. It is a length, a seam, and a click target: deciding WHEN
 /// to expand or collapse it, and by how much, belongs to whatever subsystem
@@ -38,24 +32,11 @@ final class SpacerItem {
     /// `nonisolated(unsafe)`, which would only assert it.
     nonisolated static let restingLength: CGFloat = 1
 
-    /// Which boundary this seam is.
-    ///
-    /// Design §4 asks for three zones, `pinned`, `tucked` and `vaulted`, and three zones
-    /// need TWO boundaries. One seam can only make two zones, which is why an earlier
-    /// build had a single cut and no way to express "hidden, but reachable" separately
-    /// from "hidden until I ask".
-    ///
-    /// From the right edge inwards the bar reads: Stow's token, `tucked` seam, the tucked
-    /// run, `vaulted` seam, the vaulted run. Verified with two real items: at rest the
-    /// tucked seam landed at x2293 and the vaulted seam at x2196, correctly ordered, and
-    /// expanding one at a time produced exactly the two hiding states the design needs.
+    /// A named boundary is retained for preference compatibility and diagnostic call sites,
+    /// but there is intentionally only one case.
     enum Boundary: String, CaseIterable, Sendable {
-        /// Between the pinned run and the tucked run. Expanded at rest: this is what
-        /// keeps tucked and vaulted items off the bar in normal use.
+        /// Between apps that remain visible and apps placed in Stow.
         case tucked
-        /// Between the tucked run and the vaulted run. Expanded during a reveal, so
-        /// tucked items come back while vaulted ones stay away.
-        case vaulted
 
         /// A stable identity string AppKit uses to persist this seam's position across
         /// launches. Without it macOS has nothing to key placement to and the item
@@ -65,29 +46,20 @@ final class SpacerItem {
         /// install already has a placement stored under it, and renaming would throw that
         /// away and drop the seam back to leftmost on the next launch.
         var autosaveIdentity: String {
-            switch self {
-            case .tucked: return "RailSpacer"
-            case .vaulted: return "RailVault"
-            }
+            "RailSpacer"
         }
 
         /// Where this seam sits by default, as a distance from the right edge.
         ///
-        /// Smaller is further right, so the tucked boundary's value is the SMALLER of the
-        /// two: it sits outside the vault. Both are larger than
-        /// `HideController.tokenOffsetFromRightEdge`, which keeps Stow's own token outside
-        /// both seams so a hide never removes the control that undoes it.
+        /// Larger than `HideController.tokenOffsetFromRightEdge`, which keeps Stow's own
+        /// token outside the seam so a hide never removes the control that undoes it.
         var defaultOffsetFromRightEdge: Int {
-            switch self {
-            case .tucked: return 8
-            case .vaulted: return 260
-            }
+            8
         }
     }
 
-    /// Which boundary this instance is. Immutable: a seam's identity is its placement key
-    /// and its persisted position, so a seam that could change role would silently
-    /// overwrite the other one's stored placement.
+    /// Which boundary this instance is. There is one case; retaining it keeps the existing
+    /// placement preference stable across upgrades.
     let boundary: Boundary
 
     /// The `UserDefaults` key AppKit reads to decide where this item lands.
@@ -164,11 +136,10 @@ final class SpacerItem {
     /// Why the reason is not asserted here: it was not established. What is established is
     /// the consequence, and it is concrete. A seam cannot be placed between two apps that
     /// both sit left of the floor, so those apps cannot be separated into different zones,
-    /// however the user sets them. Silently treating them as vaulted would be the dishonest
-    /// option; the plan reports them instead.
+    /// however the user sets them. The plan reports them instead.
     ///
     /// Measuring it costs one item creation and one settle, so callers should measure once
-    /// per bar shape rather than per app, and MUST measure with both seams at rest: a probe
+    /// per bar shape rather than per app, and MUST measure with the seam at rest: a probe
     /// created while a seam is expanded is pushed off the bar and measures nothing useful.
     static func measurePlacementFloor() -> CGFloat? {
         let probeName = "StowFloorProbe"
@@ -254,7 +225,7 @@ final class SpacerItem {
     var windowNumber: CGWindowID? { resolvedWindowNumber }
 
     /// - Parameters:
-    ///   - boundary: which of the two zone boundaries this seam is.
+    ///   - boundary: the single Stow boundary.
     ///   - persistPlacement: whether to set `autosaveName`, so macOS remembers where the
     ///     seam sits. TRUE for the real app, which needs that placement to survive a
     ///     relaunch. FALSE for a short-lived diagnostic such as `--seam`, whose throwaway

@@ -152,13 +152,15 @@ final class BarDoctor: ObservableObject {
                        status: .pass, action: nil)
     }
 
-    /// A hotkey manager (PLAN A) does not exist yet. Reported honestly rather
-    /// than referencing a type that is not in this module, per the PLAN 0 rule
-    /// that no PLAN A file may be named until risk 3 clears.
     func checkHotkeys() -> Finding {
-        Finding(id: "hotkey", title: "Hotkey registration",
-               detail: "not yet wired, the hotkey manager lands in PLAN A",
-               status: .info("not yet wired"), action: nil)
+        if EmergencyHotKey.shared.isRegistered {
+            return Finding(id: "hotkey", title: "Emergency restore",
+                           detail: "⌘⇧Esc is registered to Show Everything",
+                           status: .pass, action: nil)
+        }
+        return Finding(id: "hotkey", title: "Emergency restore",
+                       detail: "⌘⇧Esc could not be registered",
+                       status: .warn("Restart Stow"), action: nil)
     }
 
     /// A dedicated spacer status item (PLAN A) does not exist yet either, so

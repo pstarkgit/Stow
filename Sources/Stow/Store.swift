@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// The persisted policy layer: loads `Config`, publishes it to SwiftUI, and saves
@@ -46,7 +47,11 @@ final class Store: ObservableObject {
     private var saveTask: Task<Void, Never>?
 
     init() {
-        config = Config.load()
+        var loaded = Config.load()
+        let removed = loaded.pruneUnavailableApps(isAvailable: Self.appIsAvailable)
+        config = loaded
+        for bundleID in removed { BarHomes.forget(bundleID) }
+        if !removed.isEmpty { try? loaded.save() }
     }
 
     /// Hermetic seam for tests and previews: a fixture config, no disk read and no
@@ -94,6 +99,28 @@ final class Store: ObservableObject {
     var profiles: [Config.Profile] { config.profileList }
     var rules: [Config.Rule] { config.ruleList }
     var activeProfile: Config.Profile? { config.activeProfile }
+
+    /// Removes identifiers whose applications no longer exist.
+    ///
+    /// Called at launch and whenever Arrange refreshes. Installed-but-quit apps remain;
+    /// only an identifier absent from both Running Applications and Launch Services is stale.
+    @discardableResult
+    func pruneUnavailableApps() -> [String] {
+        var updated = config
+        let known = Set(updated.zoneByBundleID?.keys ?? [:].keys)
+            .union(BarHomes.all.keys)
+        let removed = known.filter { !Self.appIsAvailable($0) }.sorted()
+        guard !removed.isEmpty else { return [] }
+        _ = updated.pruneUnavailableApps(isAvailable: Self.appIsAvailable)
+        for bundleID in removed { BarHomes.forget(bundleID) }
+        config = updated
+        return removed
+    }
+
+    private static func appIsAvailable(_ bundleID: String) -> Bool {
+        !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
+            || NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) != nil
+    }
 
     // MARK: - Profiles
 

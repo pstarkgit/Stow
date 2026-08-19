@@ -1,29 +1,15 @@
 import CoreGraphics
 import Foundation
 
-/// Turns per-app zone choices into TWO seam positions, and states the consequences
-/// honestly.
+/// Predicts the consequences of the two-zone arrangement.
 ///
 /// The mechanism forces this shape. A status item pushes only what is to its LEFT, and no
-/// API moves another app's item, so a zone is not a property Stow can set per app: it is a
-/// side of a line. Two lines give three zones, which is what design §4 asks for and what a
-/// single seam could not express.
-///
-/// From the right edge inwards the bar reads:
-///
-///     Stow's token | tucked seam | the tucked run | vault seam | the vaulted run
-///
-/// So `pinned` is right of the tucked seam, `tucked` sits between the seams, and `vaulted`
-/// is left of the vault seam. Verified with two real seams: at rest they landed at x2293
-/// and x2196, correctly ordered, and expanding one at a time produced exactly the two
-/// hiding states.
+/// API moves another app's item, so Stow arranges apps around one stationary boundary:
+/// `.pinned` is to its right and `.tucked` is to its left.
 ///
 /// A checkbox or picker is therefore a PREFERENCE, and this type reconciles preference
 /// against geometry:
 ///
-///   - the tucked seam goes immediately right of the rightmost app that must leave the bar
-///     at rest, which is every tucked OR vaulted app
-///   - the vault seam goes immediately right of the rightmost vaulted app
 ///   - an app whose chosen zone does not match where it physically sits is reported, not
 ///     silently mis-zoned. Naming that is the whole point
 ///
@@ -58,26 +44,17 @@ enum BarPlan {
         let isPushable: Bool
     }
 
-    /// Where the seams must go, and what that costs.
+    /// What the current choices mean for the visible bar.
     struct Outcome: Equatable {
-        /// Where the TUCKED seam belongs: immediately right of the rightmost app that must
-        /// be off the bar at rest. Nil when nothing is tucked or vaulted.
+        /// Rightmost app that should be hidden. Retained for diagnostics and the legacy
+        /// placement-floor display; the active arranger keeps the boundary stationary.
         let tuckedBoundaryX: CGFloat?
-        /// Where the VAULT seam belongs: immediately right of the rightmost vaulted app.
-        /// Nil when nothing is vaulted, in which case the vault seam rests and the tucked
-        /// seam alone does the work.
-        let vaultBoundaryX: CGFloat?
-        /// Apps off the bar in the resting state, right to left. Tucked and vaulted both.
+        /// Apps requested off the bar, right to left.
         let hiddenAtRest: [String]
-        /// Apps off the bar even during a reveal, right to left. The vaulted run.
-        let hiddenWhenRevealed: [String]
         /// Apps the user PINNED that are hidden anyway, because they sit left of a seam
         /// another choice required. Each needs a Command-drag right of that seam to be
         /// spared, and naming them is what stops a silent surprise.
         let collateral: [String]
-        /// Apps the user TUCKED that will actually be vaulted, because they sit left of the
-        /// vault seam. Same class of problem one zone deeper.
-        let overVaulted: [String]
         /// Apps the user asked to move that Stow cannot move at all.
         let unreachable: [String]
         /// Apps sitting left of the leftmost position a seam can be placed at, so no seam
@@ -96,13 +73,8 @@ enum BarPlan {
         /// Whether applying this plan can honour every chosen zone without sweeping an
         /// unchosen app or silently placing an app in a deeper zone.
         ///
-        /// These used to be warnings while the engine applied the plan anyway. That made the
-        /// warning a prediction of data loss from the visible bar rather than protection from
-        /// it. Unsafe geometry must fail open: everything stays visible until the icons are
-        /// physically ordered so both seams can express the requested zones.
-        var isSafeToApply: Bool {
-            collateral.isEmpty && overVaulted.isEmpty && unreachable.isEmpty
-        }
+        /// An unaddressable app cannot be moved safely, so the plan must fail visible.
+        var isSafeToApply: Bool { unreachable.isEmpty }
     }
 
     /// Computes the outcome of the current zone choices.
@@ -125,14 +97,9 @@ enum BarPlan {
             .sorted { $0.homeX > $1.homeX }
             .map(\.bundleID)
 
-        // The tucked seam has to clear everything that leaves the bar at rest, which is
-        // both hidden zones, not just the tucked one. A seam placed only past the tucked run
-        // would leave vaulted apps sitting to its RIGHT, where nothing pushes them.
         let leavesAtRest = movable.filter { zones($0.bundleID) != .pinned }
-        let vaultedApps = movable.filter { zones($0.bundleID) == .vaulted }
 
         let tuckedBoundaryX = leavesAtRest.map(\.homeX).max()
-        let vaultBoundaryX = vaultedApps.map(\.homeX).max()
 
         func caught(leftOf boundary: CGFloat?) -> [Candidate] {
             guard let boundary else { return [] }
@@ -140,7 +107,6 @@ enum BarPlan {
         }
 
         let atRest = caught(leftOf: tuckedBoundaryX)
-        let whenRevealed = caught(leftOf: vaultBoundaryX)
 
         let belowFloor: [String] = placementFloor.map { floor in
             movable.filter { $0.homeX < floor }
@@ -150,13 +116,10 @@ enum BarPlan {
 
         return Outcome(
             tuckedBoundaryX: tuckedBoundaryX,
-            vaultBoundaryX: vaultBoundaryX,
             hiddenAtRest: atRest.map(\.bundleID),
-            hiddenWhenRevealed: whenRevealed.map(\.bundleID),
-            // Pinned, yet swept up by a seam: the warning the pane exists to show.
-            collateral: atRest.filter { zones($0.bundleID) == .pinned }.map(\.bundleID),
-            // Tucked, yet left of the vault seam, so it will not come back on a reveal.
-            overVaulted: whenRevealed.filter { zones($0.bundleID) == .tucked }.map(\.bundleID),
+            // The active arranger moves apps around a stationary boundary, so no neighbouring
+            // app is swept merely because another app was assigned to In Stow.
+            collateral: [],
             unreachable: unreachable,
             belowPlacementFloor: belowFloor)
     }

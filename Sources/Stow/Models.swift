@@ -1,22 +1,35 @@
 import AppKit
 
-/// Which zone an item lives in, expressed by POSITION relative to the one spacer.
+/// Which side of Stow's single boundary an app belongs on.
 ///
-/// There is exactly one spacer `NSStatusItem`, not three dividers. v1 of the design
-/// spent three, which costs three slots on a bar that has none. Position is the only
-/// thing macOS gives us anyway:
-///
-///     [system] [pinned] [SPACER] [tucked] [vaulted]
-///
-/// `vaulted` needs no divider of its own; it is simply further left than any reveal
-/// depth ever reaches.
-enum Zone: String, Codable, CaseIterable, Sendable {
+/// Older builds persisted a third `"vaulted"` value. It is accepted on decode and
+/// migrated to `.tucked`, but Stow never writes or exposes that unsafe state again.
+enum Zone: String, CaseIterable, Sendable {
     /// Always in the bar. Never pushed off.
     case pinned
-    /// Off the bar at rest, one hotkey away, listed in the sub-bar.
+    /// Off the bar at rest, available from Stow and restored by Show Everything.
     case tucked
-    /// Off the bar always. Reachable only from the sub-bar's overflow chip.
-    case vaulted
+}
+
+extension Zone: Codable {
+    init(from decoder: Decoder) throws {
+        let value = try decoder.singleValueContainer().decode(String.self)
+        switch value {
+        case Zone.pinned.rawValue:
+            self = .pinned
+        case Zone.tucked.rawValue, "vaulted":
+            self = .tucked
+        default:
+            throw DecodingError.dataCorruptedError(
+                in: try decoder.singleValueContainer(),
+                debugDescription: "Unknown Stow zone: \(value)")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 /// One status item as observed in the window server.

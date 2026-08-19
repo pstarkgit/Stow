@@ -5,12 +5,12 @@ import AppKit
 ///
 /// This is explicitly not the everyday interaction. Design v3 section 8 made
 /// that demotion in words: "The sub-bar owns the everyday interaction, so the
-/// panel's TUCKED and VAULTED row lists from v1 are redundant and have been
+/// panel's old multi-zone row lists are redundant and have been
 /// removed. What remains is what the sub-bar cannot do: state your capacity
 /// honestly, offer the update, and open the window. VISIBLE stays, because
 /// pinned membership is a management decision rather than a click target."
 ///
-/// The consequence for this file is concrete: there is no tucked or vaulted row
+/// The consequence for this file is concrete: there is no hidden-state table
 /// anywhere below, only their counts in the header. Adding one back would be
 /// exactly the regression section 8 exists to prevent, since the sub-bar
 /// (`SubBarPanel`, a later stage) is where a user actually reveals or re-shelves
@@ -121,7 +121,7 @@ struct StatusPanel: View {
     /// pressing it will do rather than what it last did.
     ///
     /// A `Presentation` and not a boolean: three zones produce three states, and the middle
-    /// one, tucked back but vault untouched, is the one the design exists for.
+    /// one, with hidden apps returned temporarily, is the one the design exists for.
     var presentation: HideController.Presentation = .everything
     /// Opens one visible item's own menu, the panel's cheapest and most useful
     /// action.
@@ -635,8 +635,8 @@ extension StatusPanel {
                           icon: nil, zone: .tucked, pid: 2),
                 HiddenApp(bundleID: "com.starkpat.Murmur", name: "Murmur",
                           icon: nil, zone: .tucked, pid: 3),
-                HiddenApp(bundleID: "com.example.vaulted", name: "Vaulted App",
-                          icon: nil, zone: .vaulted, pid: 4),
+                HiddenApp(bundleID: "com.example.utility", name: "Utility",
+                          icon: nil, zone: .tucked, pid: 4),
             ],
             displayName: "Studio Display")
     }
@@ -691,7 +691,7 @@ extension StatusPanel {
                                           icon: nil, zone: .tucked, pid: 1),
                             ],
                             displayName: "LG ULTRAGEAR+"))
-        measure("three hidden, one vaulted ", sample())
+        measure("three apps hidden         ", sample())
         measure("three hidden + update     ", {
             var panel = sample()
             panel.updateAvailable = true
@@ -702,7 +702,7 @@ extension StatusPanel {
         print("  BEFORE, measured the same way at fee8cbc, for comparison:")
         print("    nothing hidden             : 340 x 338pt")
         print("    one app tucked             : 340 x 378pt")
-        print("    three hidden, one vaulted  : 340 x 458pt")
+        print("    three apps hidden          : 340 x 458pt")
         print("")
         print("  The old panel spent that height on a five-line budget card, two permanent")
         print("  update rows and a version footer, all ahead of the hidden run, which is the")

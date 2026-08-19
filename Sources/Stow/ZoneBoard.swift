@@ -33,8 +33,6 @@ struct ZoneBoard: View {
         let isOnBarNow: Bool
         /// Pinned, yet a seam will sweep it off anyway.
         let isCollateral: Bool
-        /// Tucked, yet behind the vault seam, so a reveal will not bring it back.
-        let isOverVaulted: Bool
         /// Sits further left than macOS lets a seam be placed, so its zone cannot be
         /// separated from its neighbours'.
         let isBelowFloor: Bool
@@ -53,7 +51,7 @@ struct ZoneBoard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             zone(.pinned, title: "ON BAR", subtitle: "always visible")
-            seam(label: "inner hatch")
+            seam(label: "stow boundary")
             zone(.tucked, title: "IN STOW", subtitle: "hidden at rest, back when opened")
         }
     }
@@ -196,19 +194,18 @@ private struct TileView: View {
     private var caption: String? {
         if tile.isBelowFloor { return "macOS limit" }
         if tile.isCollateral { return "hidden anyway" }
-        if tile.isOverVaulted { return "vaulted anyway" }
         if !tile.isOnBarNow { return "off the bar" }
         return nil
     }
 
     private var captionTint: Color {
         if tile.isBelowFloor { return StowTheme.inkSoft }
-        if tile.isCollateral || tile.isOverVaulted { return StowTheme.orange }
+        if tile.isCollateral { return StowTheme.orange }
         return StowTheme.inkMuted
     }
 
     private var borderTint: Color {
-        if tile.isCollateral || tile.isOverVaulted { return StowTheme.orange.opacity(0.55) }
+        if tile.isCollateral { return StowTheme.orange.opacity(0.55) }
         return StowTheme.hairline
     }
 
@@ -221,10 +218,6 @@ private struct TileView: View {
         if tile.isCollateral {
             return "\(tile.name) is set to stay, but sits left of a seam your other choices"
                 + " need, so it will be hidden anyway. Command-drag it right of that seam."
-        }
-        if tile.isOverVaulted {
-            return "\(tile.name) is tucked, but sits left of the vault seam, so a reveal will"
-                + " not bring it back."
         }
         return tile.name
     }
