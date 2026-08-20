@@ -1,6 +1,28 @@
 import AppKit
 import CoreGraphics
 
+/// Read-only presentation state for the shelf countdown. Movement stays owned by
+/// `RevealCoordinator`; views only compare dates against this deadline.
+struct RevealPresentation: Equatable, Sendable {
+    let bundleID: String
+    let startedAt: Date
+    let deadline: Date
+
+    nonisolated func progress(at date: Date) -> Double {
+        let duration = deadline.timeIntervalSince(startedAt)
+        guard duration > 0 else { return 0 }
+        return min(1, max(0, deadline.timeIntervalSince(date) / duration))
+    }
+
+    nonisolated func secondsRemaining(at date: Date) -> Int {
+        max(0, Int(ceil(deadline.timeIntervalSince(date))))
+    }
+
+    nonisolated func matches(_ candidate: String) -> Bool {
+        bundleID == candidate
+    }
+}
+
 /// Temporarily brings ONE tucked app's status item back onto the visible bar, lets the
 /// user interact with it, then puts it back.
 ///
@@ -81,6 +103,10 @@ final class RevealCoordinator: ObservableObject {
     /// through `reveal` and the retuck it schedules.
     private(set) var revealedBundleID: String?
 
+    /// The same deadline as the live re-tuck timer, published for the one shelf tile
+    /// that is temporarily on the visible bar.
+    @Published private(set) var presentation: RevealPresentation?
+
     /// The window that was moved, remembered so the re-tuck does not have to find it again.
     ///
     /// The re-tuck used to re-resolve the item by matching an accessibility left edge to a window
@@ -143,6 +169,7 @@ final class RevealCoordinator: ObservableObject {
         retryTimer = nil
         revealedBundleID = nil
         revealedWindow = nil
+        presentation = nil
         pendingRetuck.removeAll()
         seamWindowLookup = nil
         Self.log("cancelled all pending retucks")
@@ -317,6 +344,7 @@ final class RevealCoordinator: ObservableObject {
         if revealedBundleID == bundleID {
             retuckTimer?.cancel()
             retuckTimer = nil
+            presentation = nil
         }
 
         guard let seam = seamWindow() else {
@@ -444,6 +472,12 @@ final class RevealCoordinator: ObservableObject {
                                 seamWindow: @escaping () -> CGWindowID?,
                                 duration: TimeInterval) {
         retuckTimer?.cancel()
+
+        let startedAt = Date()
+        presentation = RevealPresentation(
+            bundleID: bundleID,
+            startedAt: startedAt,
+            deadline: startedAt.addingTimeInterval(duration))
 
         let timer = DispatchSource.makeTimerSource(queue: timerQueue)
         timer.schedule(deadline: .now() + duration)

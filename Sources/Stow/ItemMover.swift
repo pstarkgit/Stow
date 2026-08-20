@@ -159,18 +159,48 @@ enum ItemMover {
         }
 
         permitAllEvents()
-        guard let source = CGEventSource(stateID: .hidSystemState) else {
-            throw Failure.couldNotCreateEvents
-        }
 
-        for _ in 0..<maximumAttempts {
+        for attemptNumber in 1...maximumAttempts {
+            // A fresh source and fresh geometry for every attempt. Reusing the source after a
+            // refused drag made all three retries one stale gesture, which is how an otherwise
+            // movable item such as KerberosMenuExtra exhausted the whole retry budget at once.
+            guard let source = CGEventSource(stateID: .hidSystemState) else {
+                throw Failure.couldNotCreateEvents
+            }
             try attempt(windowID: windowID, destination: destination,
                         hostPID: hostPID, source: source)
             if awaitPosition(windowID, at: destination) {
                 return Date().timeIntervalSince(began)
             }
+            if shouldRetry(after: attemptNumber) {
+                releaseAfterFailedAttempt(windowID: windowID, hostPID: hostPID,
+                                          source: source)
+            }
         }
         throw Failure.didNotLand(attempts: maximumAttempts)
+    }
+
+    /// Pure retry boundary, exposed so the three-attempt safety contract is pinned by tests.
+    nonisolated static func shouldRetry(after attemptNumber: Int) -> Bool {
+        attemptNumber < maximumAttempts
+    }
+
+    /// Ends any drag state macOS retained after accepting the synthetic mouse-up without
+    /// committing the reorder, then gives Control Center one short turn to settle before a
+    /// completely fresh attempt. Best effort: the next attempt's order check remains the verdict.
+    private static func releaseAfterFailedAttempt(windowID: CGWindowID,
+                                                  hostPID: pid_t,
+                                                  source: CGEventSource) {
+        guard let mover = positionableItems().first(where: { $0.windowNumber == windowID }),
+              let release = event(.leftMouseUp,
+                                  at: CGPoint(x: mover.frame.midX, y: mover.frame.midY),
+                                  windowID: windowID,
+                                  pid: hostPID,
+                                  command: false,
+                                  source: source)
+        else { return }
+        _ = deliver(release, hostPID: hostPID)
+        RunLoop.current.run(until: Date().addingTimeInterval(retrySettleDelay))
     }
 
     /// Whether `windowID` already sits on the requested side of the target.
@@ -462,7 +492,7 @@ enum ItemMover {
     /// be disabled under load. Measured with no retry and no drag-start wait, moves landed
     /// about half the time. Three is enough to absorb that without turning a failure into a
     /// long stall.
-    private static let maximumAttempts = 3
+    nonisolated private static let maximumAttempts = 3
 
     /// How long to wait for one event to complete the ordering dance.
     private static let deliveryTimeout: TimeInterval = 0.5
@@ -472,6 +502,9 @@ enum ItemMover {
 
     /// How long to wait for the bar to settle into the requested order after the release.
     private static let settleTimeout: TimeInterval = 0.6
+
+    /// Enough for Control Center to end a refused drag before the next fresh gesture.
+    private static let retrySettleDelay: TimeInterval = 0.12
 }
 
 // MARK: - private event plumbing

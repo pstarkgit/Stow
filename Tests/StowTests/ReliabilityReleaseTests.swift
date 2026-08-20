@@ -2,6 +2,12 @@ import Foundation
 import Testing
 @testable import Stow
 
+@Test func itemMoverRetriesOnlyBeforeItsThirdAttempt() {
+    #expect(ItemMover.shouldRetry(after: 1))
+    #expect(ItemMover.shouldRetry(after: 2))
+    #expect(!ItemMover.shouldRetry(after: 3))
+}
+
 private func transactionMove(_ bundleID: String, window: UInt32) -> BarArranger.TransactionMove {
     BarArranger.TransactionMove(
         bundleID: bundleID,

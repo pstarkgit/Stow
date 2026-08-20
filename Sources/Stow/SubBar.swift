@@ -40,6 +40,7 @@ struct HiddenApp: Identifiable, Equatable {
 struct SubBar: View {
     let apps: [HiddenApp]
     let state: BarState
+    let revealPresentation: RevealPresentation?
     let actionTitle: String
     let actionSymbol: String
     /// Opens one app's menu, without changing what is hidden.
@@ -128,6 +129,7 @@ struct SubBar: View {
     @ViewBuilder
     private func appButton(_ app: HiddenApp) -> some View {
         SubBarIcon(app: app,
+                   presentation: revealPresentation,
                    onHover: { hovering in
                        if hovering {
                            hoveredAppName = app.name
@@ -142,6 +144,7 @@ struct SubBar: View {
 /// One hidden app as a pressable icon.
 private struct SubBarIcon: View {
     let app: HiddenApp
+    let presentation: RevealPresentation?
     let onHover: (Bool) -> Void
     let onOpen: () -> Void
 
@@ -159,6 +162,22 @@ private struct SubBarIcon: View {
                         .font(.system(size: 15))
                         .foregroundStyle(StowTheme.inkMuted)
                 }
+                if let presentation, presentation.matches(app.bundleID) {
+                    TimelineView(.periodic(from: .now, by: 0.25)) { context in
+                        Circle()
+                            .stroke(StowTheme.hairline, lineWidth: 2)
+                            .overlay {
+                                Circle()
+                                    .trim(from: 0, to: presentation.progress(at: context.date))
+                                    .stroke(StowTheme.sweep(for: .tidy),
+                                            style: StrokeStyle(lineWidth: 2,
+                                                               lineCap: .round))
+                                    .rotationEffect(.degrees(-90))
+                            }
+                            .frame(width: 32, height: 32)
+                            .accessibilityHidden(true)
+                    }
+                }
             }
             .frame(width: 34, height: 38)
             .background(hovering ? StowTheme.cardHover : .clear,
@@ -172,6 +191,13 @@ private struct SubBarIcon: View {
         }
         .help("Open \(app.name) without un-hiding it")
         .accessibilityLabel(app.name)
-        .accessibilityHint("Opens this app's menu without un-hiding it")
+        .accessibilityHint(accessibilityHint)
+    }
+
+    private var accessibilityHint: String {
+        guard let presentation, presentation.matches(app.bundleID) else {
+            return "Temporarily shows this app on the menu bar and opens its menu"
+        }
+        return "Returns to Stow in \(presentation.secondsRemaining(at: Date())) seconds"
     }
 }

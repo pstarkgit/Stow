@@ -3,6 +3,20 @@ import Foundation
 import CoreGraphics
 @testable import Stow
 
+@Test func revealPresentationClampsProgressAndRoundsAccessibilitySecondsUp() {
+    let start = Date(timeIntervalSinceReferenceDate: 1_000)
+    let presentation = RevealPresentation(bundleID: "com.example.app",
+                                          startedAt: start,
+                                          deadline: start.addingTimeInterval(15))
+
+    #expect(presentation.progress(at: start.addingTimeInterval(-1)) == 1)
+    #expect(presentation.progress(at: start.addingTimeInterval(7.5)) == 0.5)
+    #expect(presentation.progress(at: start.addingTimeInterval(16)) == 0)
+    #expect(presentation.secondsRemaining(at: start.addingTimeInterval(2.1)) == 13)
+    #expect(presentation.matches("com.example.app"))
+    #expect(!presentation.matches("com.example.other"))
+}
+
 // MARK: - Config: revealDuration
 //
 // The temporary-reveal duration follows the exact optional-field-plus-clamped-accessor

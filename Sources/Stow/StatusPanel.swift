@@ -7,6 +7,8 @@ import AppKit
 /// already click. Arrangement and maintenance remain one step away in the main window.
 struct StatusPanel: View {
 
+    @ObservedObject private var revealer = RevealCoordinator.shared
+
     /// One row in the VISIBLE list.
     ///
     /// `ObservedItem` alone cannot drive a row: it carries no notion of pinned
@@ -223,6 +225,7 @@ struct StatusPanel: View {
     /// revealing it.
     private var visibleSection: some View {
         SubBar(apps: hiddenApps, state: state,
+               revealPresentation: revealer.presentation,
                actionTitle: shelfActionTitle, actionSymbol: shelfActionSymbol,
                onOpen: onOpenHidden,
                onToggle: hiddenApps.isEmpty ? onArrange : onTuckAllButPinned)
