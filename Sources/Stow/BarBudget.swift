@@ -13,6 +13,30 @@ import CoreGraphics
 /// `BarScanner` and `MenuWidthProbe`; the deciding lives here.
 struct BarBudget: Equatable, Sendable {
 
+    /// Real, visible menu-bar items suitable for user-facing rows and occupancy.
+    /// Exact seam ids are preferred; the display-width ceiling handles a spacer
+    /// owned by another process whose private window id is unavailable.
+    nonisolated static func ordinaryItems(in items: [ObservedItem],
+                                          screenWidth: CGFloat,
+                                          excluding seamWindows: Set<CGWindowID>) -> [ObservedItem] {
+        items.filter(\.isOnScreen)
+            .filter { !seamWindows.contains($0.windowNumber) }
+            .filter { $0.frame.width > 0 && $0.frame.width <= screenWidth }
+    }
+
+    /// Widths that represent ordinary menu-bar occupants rather than spacer
+    /// mechanisms. An expanded boundary can intersect the display and therefore
+    /// report `isOnScreen == true` while being several displays wide. A separate
+    /// diagnostic process cannot know that boundary's private window number, but
+    /// it can reject a width larger than the display because no ordinary status
+    /// item can legally consume more than the complete menu bar.
+    nonisolated static func occupiedWidths(in items: [ObservedItem],
+                                           screenWidth: CGFloat,
+                                           excluding seamWindows: Set<CGWindowID>) -> [CGFloat] {
+        ordinaryItems(in: items, screenWidth: screenWidth, excluding: seamWindows)
+            .map(\.frame.width)
+    }
+
     /// Full width of the display's menu bar.
     let screenWidth: CGFloat
     /// Width consumed by the FRONTMOST app's menu titles.
@@ -30,8 +54,8 @@ struct BarBudget: Equatable, Sendable {
     let notchWidth: CGFloat
     /// Clock, Control Center, Siri. Not ours to move, hide or reorder.
     let systemTrailingWidth: CGFloat
-    /// Measured widths of every item currently IN the bar, pinned plus the spacer
-    /// seam itself.
+    /// Measured widths of every ordinary item currently in the bar. Callers that
+    /// own spacer seams exclude those mechanism windows before constructing a budget.
     let occupiedWidths: [CGFloat]
 
     /// Space a status item could legally occupy on this display right now.

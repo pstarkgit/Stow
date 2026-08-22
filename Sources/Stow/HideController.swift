@@ -157,7 +157,8 @@ final class HideController: ObservableObject {
     }
 
     func measuredSeamWidth(_ boundary: SpacerItem.Boundary = .tucked) -> CGFloat? {
-        seams[boundary]?.measuredFrame()?.width
+        prepare()
+        return seams[boundary]?.measuredFrame()?.width
     }
 
     func seamWindowNumbers() -> Set<CGWindowID> {

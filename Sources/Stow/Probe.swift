@@ -194,20 +194,23 @@ enum Probe {
         // per-item number, not a measurement. Refusing to print it was correct
         // given what the phase actually asked.
         //
-        // `BarItemOwners.claims()` asks the right question instead: it asks each
+        // `BarItemOwners.identities()` asks the right question instead: it asks each
         // RUNNING APPLICATION for its own `AXExtrasMenuBar`, so the pid it returns
         // for a given item is the pid whose own app answers for that item, never
-        // Control Center's. That is the pid `PressActionProbe.probe(pid:)` was
-        // always meant to receive.
+        // Control Center's. Unlike `claims()`, it retains tucked items at negative
+        // x, which are exactly the items this coverage check must include.
         if !trusted {
             line("  SKIPPED: accessibility not granted.")
         } else {
-            let claims = BarItemOwners.claims()
-            if claims.isEmpty {
-                line("  UNMEASURABLE: no running application claimed any item's")
-                line("  AXExtrasMenuBar, so no owning pid could be resolved for probing.")
+            let identities = BarItemOwners.identities()
+            if identities.isEmpty {
+                line("  UNMEASURABLE: no running application exposed an")
+                line("  AXExtrasMenuBar identity, so no owning pid could be resolved.")
             } else {
-                let split = splitByOwner(subjects, claims: claims)
+                let excluded = ourSpacer.map { Set([$0.windowNumber]) } ?? []
+                let split = coverageSplit(subjects: subjects, identities: identities,
+                                          screenWidth: screen.frame.width,
+                                          excluding: excluded)
                 var free = 0
                 for (item, owner) in split.resolved {
                     let path = PressActionProbe.probe(pid: owner.pid)
@@ -312,6 +315,9 @@ enum Probe {
         // ---- 5. budget ------------------------------------------------------
         section("5. BAR BUDGET (points, not slots)")
         let onBar = before.items.filter(\.isOnScreen)
+        let occupiedWidths = BarBudget.occupiedWidths(in: before.items,
+                                                       screenWidth: screen.frame.width,
+                                                       excluding: [])
         let appMenuWidth = MenuWidthProbe.measureFrontmostAppMenuWidth()
         let systemTrailingWidth = MenuWidthProbe.measureSystemTrailingWidth()
         let budget = BarBudget(
@@ -323,9 +329,13 @@ enum Probe {
             appMenuWidth: appMenuWidth ?? 0,
             notchWidth: notch,
             systemTrailingWidth: systemTrailingWidth ?? 0,
-            occupiedWidths: onBar.map(\.frame.width))
+            occupiedWidths: occupiedWidths)
         line("  \(budget.arithmetic)")
-        line("  widest item on bar    : \(Int(onBar.map(\.frame.width).max() ?? 0)) pt")
+        line("  widest item on bar    : \(Int(occupiedWidths.max() ?? 0)) pt")
+        let mechanisms = onBar.count - occupiedWidths.count
+        if mechanisms > 0 {
+            line("  excluded mechanisms  : \(mechanisms) oversized spacer item(s)")
+        }
 
         // Only the field that genuinely could not be measured gets a caveat.
         // Printing one for a field that WAS measured would be the same kind of
@@ -363,6 +373,13 @@ enum Probe {
     static func splitByOwner(_ subjects: [ObservedItem], claims: [BarItemOwners.Owner])
         -> (resolved: [(item: ObservedItem, owner: BarItemOwners.Owner)], unresolved: [ObservedItem]) {
         BarItemOwners.split(subjects, claims: claims)
+    }
+
+    static func coverageSplit(subjects: [ObservedItem], identities: [BarItemOwners.Owner],
+                              screenWidth: CGFloat, excluding seamWindows: Set<CGWindowID>)
+        -> (resolved: [(item: ObservedItem, owner: BarItemOwners.Owner)], unresolved: [ObservedItem]) {
+        BarItemOwners.coverageSplit(subjects: subjects, identities: identities,
+                                    screenWidth: screenWidth, excluding: seamWindows)
     }
 
     /// Forwards to `BarItemOwners.coverageSummary`. See `splitByOwner` above for why

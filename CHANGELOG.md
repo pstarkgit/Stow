@@ -13,6 +13,23 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.21
+
+- Press-action coverage now resolves apps while they are tucked off-screen and
+  excludes Stow's own boundary, eliminating false unresolved counts.
+- Standalone row and probe diagnostics now exclude display-wide spacer mechanisms
+  from occupancy, matching the live panel's capacity calculation.
+
+## 0.1.20
+
+- Bar Doctor now verifies the live Stow boundary and emergency shortcut instead
+  of labeling those working systems as future plans.
+- Health scoring includes every check, so partial or unmeasurable evidence can no
+  longer produce a full ring or an all-healthy verdict.
+- Capacity math excludes Stow's own expanded boundary instead of reporting it as
+  thousands of points of occupied app space.
+- Product attribution now reads “built by GSD-ai.”
+
 ## 0.1.19
 
 - Redesigned the menu-bar panel as a horizontal shelf that mirrors the menu bar,

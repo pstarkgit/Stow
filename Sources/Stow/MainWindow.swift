@@ -37,6 +37,7 @@ struct MainWindow: View {
     @StateObject private var doctor = BarDoctor()
     @State private var selectedDisplayID: CGDirectDisplayID = CGMainDisplayID()
     @ObservedObject private var target = WindowTarget.shared
+    @EnvironmentObject private var hider: HideController
 
     /// The screen the header's display picker currently has selected. Falls back
     /// through `NSScreen.main` and the first available screen so a display that
@@ -76,7 +77,9 @@ struct MainWindow: View {
         // `BarDoctorView` only reads the shared instance and offers a manual
         // re-run button, so switching to Doctor never double-runs the checks.
         .task(id: selectedDisplayID) {
-            await doctor.run(screen: selectedScreen)
+            await doctor.run(screen: selectedScreen,
+                             spacerWidth: hider.measuredSeamWidth(),
+                             seamWindows: hider.seamWindowNumbers())
         }
     }
 
@@ -250,8 +253,8 @@ struct MainWindow: View {
         case .profiles:
             return (Config.defaultProfiles.count, false)
         case .doctor:
-            let n = doctor.warnCount
-            return n > 0 ? (n, true) : nil
+            let summary = doctor.summary
+            return summary.issueCount > 0 ? (summary.issueCount, summary.hasWarning) : nil
         default:
             return nil
         }
@@ -260,7 +263,11 @@ struct MainWindow: View {
     private var utilities: some View {
         HStack(spacing: 10) {
             Button {
-                Task { await doctor.run(screen: selectedScreen) }
+                Task {
+                    await doctor.run(screen: selectedScreen,
+                                     spacerWidth: hider.measuredSeamWidth(),
+                                     seamWindows: hider.seamWindowNumbers())
+                }
             } label: {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 12, weight: .semibold))

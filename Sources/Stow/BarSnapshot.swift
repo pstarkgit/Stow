@@ -99,7 +99,9 @@ final class BarSnapshot: ObservableObject {
         widths.recompute()
         let barRect = BarScanner.menuBarRect(for: screen)
         let scan = BarScanner.scan(menuBarRect: barRect)
-        let onBar = scan.items.filter(\.isOnScreen)
+        let onBar = BarBudget.ordinaryItems(in: scan.items,
+                                            screenWidth: screen.frame.width,
+                                            excluding: seamWindows)
 
         // Resolve every item against ONE claims list, passed in rather than walked
         // here: the identity question was previously asked of the wrong process, and
@@ -129,20 +131,19 @@ final class BarSnapshot: ObservableObject {
         // fixed for this and the panel was not, which is how the same wrong number
         // survived in one surface after being corrected in the other.
         //
-        // Excluded on WINDOW NUMBER, not on bundle identifier. The bundle test read as a
-        // fix and was a no-op: every status item reports Control Center as its owner, so
-        // `owner(in:)?.bundleID` is never Stow's for Stow's own seam and the predicate
-        // excluded nothing. The panel therefore still counted a ~5,000pt seam and still
-        // printed the same impossible arithmetic it was supposed to have stopped printing
-        // (measured: "5510 in use" against 1911 usable, so -3599 free, on a 2560pt bar).
-        // `MainWindow` had it right all along; this is the same exclusion, same source.
-        let othersOnBar = onBar.filter { !seamWindows.contains($0.windowNumber) }
+        // Prefer exact WINDOW NUMBER exclusion. The width ceiling is the fallback
+        // for standalone diagnostics such as `--rows`, which run in a second
+        // process and therefore cannot receive the live app's private seam id.
+        // A 5,016pt boundary on a 1,728pt display is a mechanism, never an
+        // ordinary item competing for room.
         budget = BarBudget(
             screenWidth: screen.frame.width,
             appMenuWidth: widths.frontmostAppMenuWidth ?? 0,
             notchWidth: BarScanner.notchWidth(for: screen),
             systemTrailingWidth: widths.systemTrailingWidth ?? 0,
-            occupiedWidths: othersOnBar.map(\.frame.width))
+            occupiedWidths: BarBudget.occupiedWidths(in: onBar,
+                                                      screenWidth: screen.frame.width,
+                                                      excluding: seamWindows))
 
         // Nothing is tucked yet, so crowding can only come from the bar already
         // overflowing. `BarBudget.state(widestTucked:)` handles that case itself when

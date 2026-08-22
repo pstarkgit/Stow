@@ -290,6 +290,20 @@ enum BarItemOwners {
         return (resolved, unresolved)
     }
 
+    /// Coverage is about every real item Stow may need to open, including items
+    /// currently tucked at a large negative x. Resolve against `identities`, not
+    /// on-bar `claims`, and remove spacer mechanisms that are not user items.
+    static func coverageSplit(subjects: [ObservedItem], identities: [Owner],
+                              screenWidth: CGFloat, excluding seamWindows: Set<CGWindowID>)
+        -> (resolved: [(item: ObservedItem, owner: Owner)], unresolved: [ObservedItem]) {
+        let eligible = subjects.filter {
+            !seamWindows.contains($0.windowNumber)
+                && $0.frame.width > 0
+                && $0.frame.width <= screenWidth
+        }
+        return split(eligible, claims: identities)
+    }
+
     /// The zero-reveal summary, or nil when nothing resolved.
     ///
     /// Nil rather than a "0 of 0" string on purpose: printing a rate computed from

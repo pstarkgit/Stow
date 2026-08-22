@@ -29,7 +29,7 @@ enum StowVersion {
     /// rather than asking politely.
     ///
     /// Major essentially never for a personal menu bar tool.
-    static let current = "0.1.19"
+    static let current = "0.1.21"
 
     /// The minor line this project stays on until it releases.
     ///
@@ -37,7 +37,7 @@ enum StowVersion {
     /// is a visible, deliberate edit rather than a digit changed in passing.
     static let preReleaseLine = "0.1"
 
-    static let builderAttribution = "built by Patrick"
+    static let builderAttribution = "built by GSD-ai"
 
     /// Version plus the commit the running bundle was built from.
     ///

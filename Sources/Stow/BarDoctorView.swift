@@ -26,45 +26,25 @@ struct BarDoctorView: View {
     let screen: NSScreen?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @EnvironmentObject private var hider: HideController
     @State private var appeared = false
 
-    private var headline: String {
-        if doctor.anyRunning { return "Checking…" }
-        if doctor.warnCount == 0 { return "Everything measurable looks healthy" }
-        return doctor.warnCount == 1 ? "One thing needs you" : "\(doctor.warnCount) things need you"
-    }
+    private var summary: BarDoctor.Summary { doctor.summary }
+    private var headline: String { doctor.anyRunning ? "Checking…" : summary.headline }
     private var subheadline: String {
         guard !doctor.findings.isEmpty else { return "Running Stow's own checks" }
         let when = doctor.lastRun.map { Fmt.agoShort($0) } ?? "just now"
         return "\(doctor.findings.count) checks · \(when)"
     }
-    private var healthFraction: Double {
-        let scored = doctor.passCount + doctor.warnCount
-        return scored == 0 ? 0 : Double(doctor.passCount) / Double(scored)
-    }
-
-    /// Findings from a subsystem that exists today. Split from `planned` so the
-    /// Doctor never implies a fix is one click away for a check that has nothing
-    /// behind it yet.
-    private var measured: [BarDoctor.Finding] {
-        doctor.findings.filter { $0.id == "access" || $0.id == "pointmath" || $0.id == "coverage" }
-    }
-    /// Findings that report "not yet wired" because their subsystem is PLAN A.
-    private var planned: [BarDoctor.Finding] {
-        doctor.findings.filter { $0.id == "hotkey" || $0.id == "spacer" }
-    }
+    private var healthFraction: Double { summary.fraction }
 
     var body: some View {
         VStack(spacing: 0) {
             hero
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    if !measured.isEmpty {
-                        sectionView("MEASURED TODAY", findings: measured, offset: 0)
-                    }
-                    if !planned.isEmpty {
-                        sectionView("PLAN A, NOT YET WIRED", findings: planned,
-                                    offset: measured.count)
+                    if !doctor.findings.isEmpty {
+                        sectionView("LIVE BAR CHECKS", findings: doctor.findings, offset: 0)
                     }
                     if doctor.findings.isEmpty && doctor.running {
                         HStack {
@@ -131,12 +111,12 @@ struct BarDoctorView: View {
                     .stroke(Color.white.opacity(0.08), lineWidth: 9)
                 Circle()
                     .trim(from: 0, to: appeared ? healthFraction : 0)
-                    .stroke(doctor.warnCount > 0
+                    .stroke(summary.hasWarning
                             ? AnyShapeStyle(StowTheme.sweep(for: .crowded))
                             : AnyShapeStyle(StowTheme.sweep(for: .tidy)),
                             style: StrokeStyle(lineWidth: 9, lineCap: .round))
                     .rotationEffect(.degrees(-90))
-                    .shadow(color: doctor.warnCount > 0
+                    .shadow(color: summary.hasWarning
                             ? StowTheme.edgeGlow(for: .crowded)
                             : StowTheme.edgeGlow(for: .tidy), radius: 9)
                     .animation(reduceMotion ? nil : .spring(duration: 0.9, bounce: 0.15),
@@ -150,14 +130,14 @@ struct BarDoctorView: View {
                         Text("\(doctor.passCount)")
                             .font(.system(size: 24, weight: .bold, design: .rounded))
                             .foregroundStyle(StowTheme.ink)
-                        Text("of \(max(doctor.passCount + doctor.warnCount, 1))")
+                        Text("of \(max(summary.totalCount, 1))")
                             .font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(StowTheme.inkMuted)
                     }
                 }
             }
             .frame(width: 80, height: 80)
-            .accessibilityLabel("\(doctor.passCount) of \(max(doctor.passCount + doctor.warnCount, 1)) scored checks passing")
+            .accessibilityLabel("\(summary.passCount) of \(max(summary.totalCount, 1)) checks passing")
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(headline)
@@ -169,7 +149,11 @@ struct BarDoctorView: View {
             }
             Spacer()
             Button {
-                Task { await doctor.run(screen: screen) }
+                Task {
+                    await doctor.run(screen: screen,
+                                     spacerWidth: hider.measuredSeamWidth(),
+                                     seamWindows: hider.seamWindowNumbers())
+                }
             } label: {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 13, weight: .semibold))
@@ -219,7 +203,7 @@ struct BarDoctorView: View {
 
     private var footer: some View {
         HStack {
-            Text("Every measured finding has one action. The unwired ones have none, honestly.")
+            Text("Live checks report incomplete evidence instead of treating it as healthy.")
                 .font(.system(size: 10))
                 .foregroundStyle(StowTheme.inkMuted)
             Spacer()
@@ -237,7 +221,11 @@ struct BarDoctorView: View {
         switch action {
         case .grantAccessibility:
             PressActionProbe.requestTrust()
-            Task { await doctor.run(screen: screen) }
+            Task {
+                await doctor.run(screen: screen,
+                                 spacerWidth: hider.measuredSeamWidth(),
+                                 seamWindows: hider.seamWindowNumbers())
+            }
         }
     }
 }
@@ -284,8 +272,8 @@ private struct BarFindingRow: View {
     }
 
     /// The bar state this finding's status maps onto, so the tile wears the same
-    /// gradient family the menu bar token does. `.info` (a planned check, or a
-    /// measured one with nothing to warn about) has no natural `BarState` of its
+    /// gradient family the menu bar token does. `.info` (partial or unavailable
+    /// evidence) has no natural `BarState` of its
     /// own, so it stays a flat ink tile rather than borrowing an unrelated hue.
     private var barState: BarState? {
         switch finding.status {
