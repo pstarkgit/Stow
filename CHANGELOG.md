@@ -13,6 +13,11 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.22
+
+- Stow no longer recreates an already correctly placed boundary during launch,
+  preventing intermittent startup arrangement failures that left every app visible.
+
 ## 0.1.21
 
 - Press-action coverage now resolves apps while they are tucked off-screen and

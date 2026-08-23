@@ -184,7 +184,10 @@ final class SpacerItem {
         privateIdentity = persistPlacement
             ? boundary.autosaveIdentity
             : "\(boundary.autosaveIdentity)-probe-\(ProcessInfo.processInfo.processIdentifier)"
-        currentPlacement = boundary.defaultOffsetFromRightEdge
+        currentPlacement = Self.initialPlacement(
+            persistPlacement: persistPlacement,
+            recordedPlacement: Self.recordedPlacement(for: boundary),
+            defaultPlacement: boundary.defaultOffsetFromRightEdge)
         windowNumbersBeforeCreation = Self.currentWindowNumbers()
         item = NSStatusBar.system.statusItem(withLength: Self.restingLength)
         if persistPlacement {
@@ -192,6 +195,22 @@ final class SpacerItem {
         }
         paintedState = state
         Self.paint(item, for: state)
+    }
+
+    /// The placement this instance actually occupies when it is created.
+    ///
+    /// A persistent seam is created only after its placement preference has been
+    /// written, so its in-memory state must start from that recorded value. Starting
+    /// from the boundary's generic default instead made `HideController` believe a
+    /// correctly parked launch seam was misplaced. Every launch then destroyed that
+    /// working item and raced macOS while creating an unnecessary replacement.
+    ///
+    /// Diagnostics deliberately use a process-private autosave identity. They must
+    /// ignore the live app's shared preference and keep the generic default instead.
+    nonisolated static func initialPlacement(persistPlacement: Bool,
+                                             recordedPlacement: Int?,
+                                             defaultPlacement: Int) -> Int {
+        persistPlacement ? (recordedPlacement ?? defaultPlacement) : defaultPlacement
     }
 
     /// Whether this seam owns the shared placement preference for its boundary.
