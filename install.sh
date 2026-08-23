@@ -64,24 +64,45 @@ fi
 # the spacer expanded and nothing brings it back, the user's tucked items stay off the
 # bar with no way to recover them short of relaunching. Verifying the exit matters
 # more here than it did for either sibling.
+STOPPED_PIDS=""
+
+stopped_instances_alive() {
+    for pid in $STOPPED_PIDS; do
+        kill -0 "$pid" 2>/dev/null && return 0
+    done
+    return 1
+}
+
+was_stopped_pid() {
+    for pid in $STOPPED_PIDS; do
+        [ "$pid" = "$1" ] && return 0
+    done
+    return 1
+}
+
 stop_running_instances() {
-    pgrep -x Stow >/dev/null || return 0
-    pkill -x Stow 2>/dev/null || true
+    # Capture ownership ONCE. Name-wide pgrep/pkill loops race short-lived CLI
+    # diagnostics (`Stow --version`, `--rows`, `--probe`) and can briefly conclude
+    # the app is gone while the original UI process still exists. Publication must
+    # prove the exact process(es) present before the update are gone.
+    STOPPED_PIDS="$(pgrep -x Stow || true)"
+    [ -n "$STOPPED_PIDS" ] || return 0
+    kill $STOPPED_PIDS 2>/dev/null || true
     for _ in $(seq 1 50); do
-        pgrep -x Stow >/dev/null || break
+        stopped_instances_alive || break
         sleep 0.2
     done
-    if pgrep -x Stow >/dev/null; then
+    if stopped_instances_alive; then
         echo "  Stow ignored SIGTERM, sending SIGKILL"
-        pkill -9 -x Stow 2>/dev/null || true
+        for pid in $STOPPED_PIDS; do
+            kill -9 "$pid" 2>/dev/null || true
+        done
         for _ in $(seq 1 25); do
-            pgrep -x Stow >/dev/null || break
+            stopped_instances_alive || break
             sleep 0.2
         done
     fi
-    if pgrep -x Stow >/dev/null; then
-        # ONE stderr line: the in-app updater takes the LAST line as the failure
-        # message, so rationale on further lines would replace this one.
+    if stopped_instances_alive; then
         echo "ERROR: Stow survived SIGKILL; refusing to replace its bundle. Quit Stow and re-run." >&2
         return 1
     fi
@@ -281,7 +302,7 @@ restore_backup() {
     fi
     mv "$BACKUP_APP" "$FINAL_APP" || return 1
     echo "Restored the previous Stow.app" >&2
-    open "$FINAL_APP" 2>/dev/null || true
+    open -n "$FINAL_APP" 2>/dev/null || true
 }
 
 HAD_PREVIOUS=false
@@ -289,7 +310,7 @@ if [ -d "$FINAL_APP" ]; then
     if ! mv "$FINAL_APP" "$BACKUP_APP"; then
         # NOT "nothing was changed": the app was stopped above, so it is down.
         echo "ERROR: could not move the existing app aside; it is unchanged but stopped." >&2
-        open "$FINAL_APP" 2>/dev/null || true
+        open -n "$FINAL_APP" 2>/dev/null || true
         exit 1
     fi
     HAD_PREVIOUS=true
@@ -301,7 +322,13 @@ if ! mv "$STAGE_APP" "$FINAL_APP"; then
     exit 1
 fi
 
-if ! open "$FINAL_APP"; then
+# Force a NEW Launch Services instance. The old process is gone by this point, but
+# Launch Services can retain its registration briefly after an in-app update. Plain
+# `open` then returns success after targeting that dead registration and starts
+# nothing; the health check waits ten seconds, reports "never started", and rolls a
+# valid signed update back. `-n` bypasses that stale registration. The verified
+# pgrep shutdown above prevents this from creating a duplicate live instance.
+if ! open -n "$FINAL_APP"; then
     echo "ERROR: the new Stow.app could not be launched." >&2
     [ "$HAD_PREVIOUS" = true ] && restore_backup
     exit 1
@@ -315,24 +342,31 @@ fi
 # states a single loop conflates. Registration after `open` is asynchronous: AuthBar
 # measured 0.12-0.17s warm, against a first sample at 0.2s, so a cold machine would
 # miss the first sample and roll a HEALTHY install back.
-APPEARED=false
+NEW_PID=""
 for _ in $(seq 1 50); do
-    if pgrep -x Stow >/dev/null; then APPEARED=true; break; fi
+    for candidate in $(pgrep -x Stow || true); do
+        if ! was_stopped_pid "$candidate"; then
+            NEW_PID="$candidate"
+            break
+        fi
+    done
+    [ -n "$NEW_PID" ] && break
     sleep 0.2
 done
 
-# Only once it exists does absence mean death. EVERY sample must then find it alive,
-# breaking on the first miss: sampling only at the end would pass an app that died at
-# 1s and was respawned at 4s, which is the crash-loop this catches.
-STAYED_RUNNING=$APPEARED
-if [ "$APPEARED" = true ]; then
+# Only once a distinct replacement PID exists does absence mean death. EVERY sample
+# must then find THAT SAME PID alive. A name-wide pgrep can be satisfied by the old
+# process, a CLI diagnostic, or a later respawn and falsely approve the installation.
+STAYED_RUNNING=false
+if [ -n "$NEW_PID" ]; then
+    STAYED_RUNNING=true
     for _ in $(seq 1 25); do
         sleep 0.2
-        if ! pgrep -x Stow >/dev/null; then STAYED_RUNNING=false; break; fi
+        if ! kill -0 "$NEW_PID" 2>/dev/null; then STAYED_RUNNING=false; break; fi
     done
 fi
 if [ "$STAYED_RUNNING" != true ]; then
-    if [ "$APPEARED" = true ]; then
+    if [ -n "$NEW_PID" ]; then
         echo "ERROR: the new Stow.app started, then exited." >&2
     else
         echo "ERROR: the new Stow.app never started." >&2

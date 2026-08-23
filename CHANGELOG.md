@@ -13,6 +13,13 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.23
+
+- Updates no longer reinstall an identical build just because GitHub added a
+  merge commit, and relaunches now bypass stale Launch Services registrations.
+- Failed updates now show the underlying installer error while preserving the
+  previous working app.
+
 ## 0.1.22
 
 - Stow no longer recreates an already correctly placed boundary during launch,

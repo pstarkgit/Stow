@@ -133,13 +133,30 @@ final class Updater: ObservableObject {
             return .failed("rev-parse failed")
         }
         let (local, remote) = (parts[0], parts[1])
+
+        // A merge commit can advance origin without changing one byte of the app.
+        // This is the ordinary GitHub flow for a reviewed feature commit: the installed
+        // feature SHA becomes a parent of a new merge SHA whose tree is identical. Commit
+        // ancestry alone calls that "one new build" and pointlessly rebuilds/reinstalls the
+        // exact version already running. Compare trees before ancestry so metadata-only
+        // commits are current by the thing users receive: application content.
+        let installedTreeMatchesRemote: Bool
+        if installed != "dev",
+           case .exited(0, let trees, _) = await git(
+            ["rev-parse", "\(installed)^{tree}", "\(remote)^{tree}"]
+           ) {
+            let ids = trees.split(separator: "\n").map(String.init)
+            installedTreeMatchesRemote = ids.count == 2 && ids[0] == ids[1]
+        } else {
+            installedTreeMatchesRemote = false
+        }
         // Compare what's INSTALLED (Info.plist stamp), not just the checkout.
         // A dev checkout can be at or ahead of origin while the running binary
         // is stale (built before the last commits), and that IS an update.
         let installedIsCurrent: Bool
         if installed == "dev" {
             installedIsCurrent = true   // unstamped dev build, cannot compare
-        } else if remote.hasPrefix(installed) {
+        } else if remote.hasPrefix(installed) || installedTreeMatchesRemote {
             installedIsCurrent = true
         } else if case .exited(0, _, _) = await git(["merge-base", "--is-ancestor", remote, installed]) {
             installedIsCurrent = true   // installed at or past origin tip
@@ -340,14 +357,26 @@ final class Updater: ObservableObject {
         }
     }
 
-    /// Last non-blank line of the installer log, for the failure message.
+    /// Actionable failure from the installer log.
     ///
+    /// Transactional rollback deliberately writes after the primary error. Showing
+    /// the final line therefore reduced every launch failure to "Restored the previous
+    /// Stow.app", which describes the safety response but hides what actually failed.
+    /// Prefer the last explicit ERROR and fall back to the last non-blank line for
+    /// tools that exit without using the installer's error convention.
+    ///
+    /// Kept under its original name for source compatibility with existing tests.
     /// `nonisolated`: a pure function of its argument, touching no instance state.
     nonisolated static func lastLine(ofLogAt path: String) -> String? {
         guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
-        return text.split(separator: "\n")
+        let lines = text.split(separator: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
-            .last { !$0.isEmpty }
+            .filter { !$0.isEmpty }
+        if let error = lines.last(where: { $0.hasPrefix("ERROR:") }) {
+            return error.dropFirst("ERROR:".count)
+                .trimmingCharacters(in: .whitespaces)
+        }
+        return lines.last
     }
 }
 
