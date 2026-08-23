@@ -16,6 +16,71 @@ import Testing
                                         defaultPlacement: 8) == 8)
 }
 
+// MARK: - Self-update lifecycle
+
+@Test @MainActor func metadataOnlyMergeCommitDoesNotOfferAPointlessReinstall() async {
+    let state = await Updater.decideCheck(installed: "installed") { args in
+        switch args {
+        case ["fetch", "--quiet", "origin", "main"]:
+            return .exited(0, "", "")
+        case ["rev-parse", "HEAD", "origin/main"]:
+            return .exited(0, "remote\nremote", "")
+        case ["rev-parse", "installed^{tree}", "remote^{tree}"]:
+            return .exited(0, "same-tree\nsame-tree", "")
+        case ["merge-base", "--is-ancestor", "remote", "installed"]:
+            return .exited(1, "", "")
+        case ["merge-base", "--is-ancestor", "installed", "remote"]:
+            return .exited(0, "", "")
+        case ["rev-list", "--count", "installed..remote"]:
+            return .exited(0, "1", "")
+        default:
+            Issue.record("unexpected git invocation: \(args)")
+            return .launchFailed
+        }
+    }
+
+    guard case .upToDate = state else {
+        Issue.record("an identical source tree must be current, got \(state)")
+        return
+    }
+}
+
+@Test func updaterReportsTheInstallerErrorInsteadOfTheRollbackStatus() throws {
+    let log = FileManager.default.temporaryDirectory
+        .appending(path: "stow-update-\(UUID().uuidString).log")
+    defer { try? FileManager.default.removeItem(at: log) }
+    try """
+    Signed with Developer ID + Hardened Runtime
+    ERROR: the new Stow.app never started.
+    Restored the previous Stow.app
+    """.write(to: log, atomically: true, encoding: .utf8)
+
+    #expect(Updater.lastLine(ofLogAt: log.path) == "the new Stow.app never started.")
+}
+
+@Test func installerForcesANewLaunchAfterStoppingTheOldProcess() throws {
+    let root = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let script = try String(contentsOf: root.appending(path: "install.sh"),
+                            encoding: .utf8)
+
+    #expect(script.contains(#"if ! open -n "$FINAL_APP"; then"#))
+}
+
+@Test func installerVerifiesTheExactReplacementProcess() throws {
+    let root = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let script = try String(contentsOf: root.appending(path: "install.sh"),
+                            encoding: .utf8)
+
+    #expect(script.contains(#"STOPPED_PIDS="$(pgrep -x Stow || true)""#))
+    #expect(script.contains(#"kill -0 "$NEW_PID""#))
+}
+
 @Test func itemMoverRetriesOnlyBeforeItsThirdAttempt() {
     #expect(ItemMover.shouldRetry(after: 1))
     #expect(ItemMover.shouldRetry(after: 2))
