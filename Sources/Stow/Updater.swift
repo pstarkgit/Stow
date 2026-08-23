@@ -150,6 +150,14 @@ final class Updater: ObservableObject {
         } else {
             installedTreeMatchesRemote = false
         }
+        // Content equality is authoritative regardless of which commit the checkout
+        // currently names. After a PR merge, local HEAD commonly remains the reviewed
+        // feature commit while origin/main names GitHub's merge commit. Letting the
+        // later checkout-ancestry branch continue would override this proof and offer
+        // the metadata-only merge as "1 new build" anyway.
+        if installedTreeMatchesRemote {
+            return .upToDate(Date())
+        }
         // Compare what's INSTALLED (Info.plist stamp), not just the checkout.
         // A dev checkout can be at or ahead of origin while the running binary
         // is stale (built before the last commits), and that IS an update.

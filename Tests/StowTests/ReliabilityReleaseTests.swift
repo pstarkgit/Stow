@@ -24,7 +24,9 @@ import Testing
         case ["fetch", "--quiet", "origin", "main"]:
             return .exited(0, "", "")
         case ["rev-parse", "HEAD", "origin/main"]:
-            return .exited(0, "remote\nremote", "")
+            // The checkout still names the reviewed feature commit while origin/main
+            // names GitHub's merge commit. Their trees are identical below.
+            return .exited(0, "installed\nremote", "")
         case ["rev-parse", "installed^{tree}", "remote^{tree}"]:
             return .exited(0, "same-tree\nsame-tree", "")
         case ["merge-base", "--is-ancestor", "remote", "installed"]:
