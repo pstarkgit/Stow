@@ -2,6 +2,20 @@ import Foundation
 import Testing
 @testable import Stow
 
+// MARK: - Boundary launch lifecycle
+
+@Test func persistentBoundaryTracksItsRecordedPlacementAtCreation() {
+    #expect(SpacerItem.initialPlacement(persistPlacement: true,
+                                        recordedPlacement: 900,
+                                        defaultPlacement: 8) == 900)
+}
+
+@Test func diagnosticBoundaryIgnoresTheLiveAppsRecordedPlacement() {
+    #expect(SpacerItem.initialPlacement(persistPlacement: false,
+                                        recordedPlacement: 900,
+                                        defaultPlacement: 8) == 8)
+}
+
 @Test func itemMoverRetriesOnlyBeforeItsThirdAttempt() {
     #expect(ItemMover.shouldRetry(after: 1))
     #expect(ItemMover.shouldRetry(after: 2))
