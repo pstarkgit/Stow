@@ -352,6 +352,9 @@ enum BarArranger {
             guard let index = items.firstIndex(where: {
                 $0.windowNumber == expectation.windowID
             }) else {
+                append("verify bundle=\(expectation.bundleID) win=\(expectation.windowID)"
+                       + " missing; seam=win\(seamID) index=\(seamIndex)"
+                       + " layout=\(layoutDescription(items))")
                 failures.append(Outcome.Failure(
                     bundleID: expectation.bundleID,
                     reason: "its menu-bar item disappeared during verification.",
@@ -359,6 +362,10 @@ enum BarArranger {
                 continue
             }
             guard expectation.wantsRight != (index > seamIndex) else { continue }
+            append("verify bundle=\(expectation.bundleID) win=\(expectation.windowID)"
+                   + " index=\(index) wantsRight=\(expectation.wantsRight)"
+                   + " seam=win\(seamID) index=\(seamIndex)"
+                   + " layout=\(layoutDescription(items))")
             failures.append(Outcome.Failure(
                 bundleID: expectation.bundleID,
                 reason: expectation.wantsRight
@@ -367,6 +374,12 @@ enum BarArranger {
                 recovery: "Stow restored the previous layout; try again."))
         }
         return failures
+    }
+
+    private static func layoutDescription(_ items: [ObservedItem]) -> String {
+        items.enumerated().map { index, item in
+            "\(index):win\(item.windowNumber)@x\(Int(item.frame.minX))w\(Int(item.frame.width))"
+        }.joined(separator: ",")
     }
 
     private static func friendlyMoveReason(_ error: Error) -> String {

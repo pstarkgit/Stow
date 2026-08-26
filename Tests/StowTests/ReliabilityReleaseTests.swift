@@ -89,6 +89,77 @@ import Testing
     #expect(!ItemMover.shouldRetry(after: 3))
 }
 
+@Test func itemMoverDoesNotAcceptOneTransientCorrectFrameAsSettled() {
+    #expect(!ItemMover.positionIsStable(correctSamples: 1))
+    #expect(!ItemMover.positionIsStable(correctSamples: 9))
+    #expect(ItemMover.positionIsStable(correctSamples: 10))
+}
+
+@Test func boundaryIdentityUsesWidthWhenANeighbourSharesItsReportedX() {
+    let seam = ObservedItem(windowNumber: 10, ownerPID: 1, bundleID: nil,
+                            ownerName: "Control Center",
+                            frame: CGRect(x: 1146, y: 0, width: 17, height: 33),
+                            isOnScreen: true)
+    let neighbour = ObservedItem(windowNumber: 11, ownerPID: 1, bundleID: nil,
+                                 ownerName: "Control Center",
+                                 frame: CGRect(x: 1163, y: 0, width: 38, height: 33),
+                                 isOnScreen: true)
+
+    let match = SpacerItem.matchingWindow(
+        in: [neighbour, seam],
+        ownFrame: CGRect(x: 1163, y: 0, width: 17, height: 33))
+
+    #expect(match?.windowNumber == seam.windowNumber)
+}
+
+@Test func boundaryIdentityRejectsANearbyWindowWithTheWrongWidth() {
+    let neighbour = ObservedItem(windowNumber: 11, ownerPID: 1, bundleID: nil,
+                                 ownerName: "Control Center",
+                                 frame: CGRect(x: 1163, y: 0, width: 38, height: 33),
+                                 isOnScreen: true)
+
+    #expect(SpacerItem.matchingWindow(
+        in: [neighbour],
+        ownFrame: CGRect(x: 1163, y: 0, width: 17, height: 33)) == nil)
+}
+
+@Test @MainActor func anAppRefusalGetsOneFreshArrangementAttempt() {
+    var attempts = 0
+    var resets = 0
+    let outcome = HideController.executeArrangementWithTransientRetry(
+        perform: {
+            attempts += 1
+            if attempts == 1 {
+                var failed = BarArranger.Outcome()
+                failed.failed = [transactionFailure("com.example.app", "move refused")]
+                return failed
+            }
+            return BarArranger.Outcome()
+        },
+        beforeRetry: { resets += 1 })
+
+    #expect(attempts == 2)
+    #expect(resets == 1)
+    #expect(outcome.isClean)
+}
+
+@Test @MainActor func anEnvironmentalArrangeFailureIsNotRepeated() {
+    var attempts = 0
+    var resets = 0
+    let outcome = HideController.executeArrangementWithTransientRetry(
+        perform: {
+            attempts += 1
+            var failed = BarArranger.Outcome()
+            failed.failed = [transactionFailure(nil, "Accessibility unavailable")]
+            return failed
+        },
+        beforeRetry: { resets += 1 })
+
+    #expect(attempts == 1)
+    #expect(resets == 0)
+    #expect(!outcome.isClean)
+}
+
 private func transactionMove(_ bundleID: String, window: UInt32) -> BarArranger.TransactionMove {
     BarArranger.TransactionMove(
         bundleID: bundleID,

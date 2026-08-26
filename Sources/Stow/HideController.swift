@@ -183,6 +183,11 @@ final class HideController: ObservableObject {
         prepare()
         let previous = presentation
 
+        // A warning describes the latest completed arrange, not permanent app state. Clear it
+        // before beginning a fresh attempt so a prior refusal cannot remain on screen while the
+        // replacement transaction is already succeeding.
+        lastArrangeFailures = []
+
         showEverything()
         guard let seam = seams[.tucked] else {
             return failedOutcome(reason: "the Stow boundary is not available", began: began)
@@ -200,11 +205,27 @@ final class HideController: ObservableObject {
             return failedOutcome(reason: "the Stow boundary lost its window", began: began)
         }
 
-        let outcome = BarArranger.arrange(config: config) { [weak seam] in
-            _ = seam?.measuredFrame()
-            return seam?.windowNumber
-        }
-        BarArranger.log(outcome, context: "arrange from=\(previous)")
+        var attempt = 0
+        var outcome = Self.executeArrangementWithTransientRetry(
+            perform: {
+                attempt += 1
+                let result = BarArranger.arrange(config: config) { [weak seam] in
+                    _ = seam?.measuredFrame()
+                    return seam?.windowNumber
+                }
+                BarArranger.log(result, context: "arrange from=\(previous) attempt=\(attempt)")
+                return result
+            },
+            beforeRetry: {
+                // The move primitive is healthy, but Control Center intermittently refuses one
+                // whole app transaction. A fresh scan immediately succeeds in that condition.
+                // Collapse the boundary and let the bar settle before resolving every live window
+                // and owner again; never reuse the failed transaction's geometry.
+                showEverything()
+                _ = seam.awaitMeasuredWidth { $0 < Self.restingWidthCeiling }
+                awaitBarToSettle()
+            })
+        outcome.cost = Date().timeIntervalSince(began)
         lastArrangeFailures = outcome.failed
 
         guard outcome.isClean else {
@@ -219,6 +240,27 @@ final class HideController: ObservableObject {
             config.hidesAnything ? hide() : showEverything()
         }
         return outcome
+    }
+
+    /// Runs one fresh replacement transaction after an app-specific refusal.
+    ///
+    /// Failures without an app identity are environmental or structural (Accessibility, owner
+    /// resolution, or the boundary itself). Repeating those cannot help and would only freeze the
+    /// panel for another full arrange budget. A named app failure is the transient shape measured
+    /// in the live log: the first transaction was refused and an immediate fresh transaction
+    /// completed in 0.52 seconds.
+    static func executeArrangementWithTransientRetry(
+        perform: () -> BarArranger.Outcome,
+        beforeRetry: () -> Void
+    ) -> BarArranger.Outcome {
+        let first = perform()
+        guard shouldRetryArrangement(first) else { return first }
+        beforeRetry()
+        return perform()
+    }
+
+    nonisolated static func shouldRetryArrangement(_ outcome: BarArranger.Outcome) -> Bool {
+        !outcome.failed.isEmpty && outcome.failed.allSatisfy { $0.bundleID != nil }
     }
 
     private func failedOutcome(reason: String,
