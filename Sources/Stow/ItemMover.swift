@@ -445,11 +445,28 @@ enum ItemMover {
     /// an earlier measurement report 3s timeouts for moves that had arrived.
     private static func awaitPosition(_ windowID: CGWindowID, at destination: Destination) -> Bool {
         let deadline = Date().addingTimeInterval(settleTimeout)
+        var consecutiveCorrectSamples = 0
         while Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-            if isPositioned(windowID, at: destination) { return true }
+            if isPositioned(windowID, at: destination) {
+                consecutiveCorrectSamples += 1
+                if positionIsStable(correctSamples: consecutiveCorrectSamples) { return true }
+            } else {
+                consecutiveCorrectSamples = 0
+            }
         }
         return false
+    }
+
+    /// A single correct frame is not a completed move.
+    ///
+    /// Control Center can briefly draw the requested order and then snap an item back while its
+    /// status-item transaction finishes. Returning on that first frame let the arranger start the
+    /// next app, after which final verification found Kerberos back on the wrong side. Requiring a
+    /// short stable run keeps the total inside the existing settle timeout while preventing that
+    /// transient frame from being reported as success.
+    nonisolated static func positionIsStable(correctSamples: Int) -> Bool {
+        correctSamples >= requiredStablePositionSamples
     }
 
     /// Polls until the item's frame moves at all, which is how the drag announces it began.
@@ -502,6 +519,10 @@ enum ItemMover {
 
     /// How long to wait for the bar to settle into the requested order after the release.
     private static let settleTimeout: TimeInterval = 0.6
+
+    /// Ten 10ms observations: long enough to outlast the measured Control Center snap-back,
+    /// short enough to add only 0.1s to a move that genuinely landed.
+    nonisolated private static let requiredStablePositionSamples = 10
 
     /// Enough for Control Center to end a refused drag before the next fresh gesture.
     private static let retrySettleDelay: TimeInterval = 0.12

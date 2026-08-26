@@ -206,10 +206,15 @@ extension BarSnapshot {
         print("  display               : \(snapshot.displayName)")
         print("  bar state             : \(snapshot.state)")
         print("")
-        print("  " + pad("NAME", 30) + pad("BADGE", 9) + pad("WIDTH", 7) + "BUNDLE")
+        print("  " + pad("NAME", 25) + pad("BADGE", 9) + pad("WIN", 8)
+              + pad("X", 8) + pad("AX X", 8) + pad("WIDTH", 7) + "BUNDLE")
         for row in snapshot.rows {
             let badge = row.isSystem ? "SYSTEM" : (row.owner == nil ? "UNKNOWN" : "APP")
-            print("  " + pad(row.displayName, 30) + pad(badge, 9)
+            let ownerX = row.owner.map { "\(Int($0.axLeftEdge))pt" } ?? "-"
+            print("  " + pad(row.displayName, 25) + pad(badge, 9)
+                  + pad("\(row.item.windowNumber)", 8)
+                  + pad("\(Int(row.item.frame.minX))pt", 8)
+                  + pad(ownerX, 8)
                   + pad("\(Int(row.item.frame.width))pt", 7)
                   + (row.owner?.bundleID ?? ""))
         }

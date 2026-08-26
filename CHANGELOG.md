@@ -13,6 +13,16 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.24
+
+- Arrangement now waits for each icon to remain in place before moving the next app,
+  retries one fresh verified transaction after a transient refusal, and clears an old
+  failure warning before the retry begins.
+- Boundary identity now requires both position and width, preventing a neighboring app
+  from being mistaken for Stow while the menu bar is reflowing.
+- Structural failures such as missing Accessibility or boundary evidence still stop
+  immediately instead of repeating an operation that cannot succeed.
+
 ## 0.1.23
 
 - Updates no longer reinstall an identical build just because GitHub added a

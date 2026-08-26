@@ -361,22 +361,36 @@ final class SpacerItem {
         // sat there; widened to 300pt it reported x-4311 w316 and the same window had followed
         // it. So position identifies our own item reliably, and unlike the diff it re-derives on
         // every call rather than trusting a value that may already be stale.
-        guard let own = item.button?.window?.frame else { return nil }
-        guard let ours = scan.items.min(by: {
-            abs($0.frame.minX - own.minX) < abs($1.frame.minX - own.minX)
-        }), abs(ours.frame.minX - own.minX) <= Self.ownWindowMatchTolerance else {
-            return nil
-        }
+        guard let own = item.button?.window?.frame,
+              let ours = Self.matchingWindow(in: scan.items, ownFrame: own)
+        else { return nil }
         resolvedWindowNumber = ours.windowNumber
         return ours.frame
     }
 
-    /// How far a bar-level window may sit from our own reported x and still be ours.
+    /// Resolves the Control Center-hosted window that represents this status item.
     ///
-    /// Measured as an EXACT match in both trials, at rest and expanded, so this is slack for
-    /// rounding rather than for any real discrepancy. Small on purpose: the nearest neighbouring
-    /// item is at least ~17pt away, so anything looser could claim it instead.
-    private static let ownWindowMatchTolerance: CGFloat = 6
+    /// X alone is not identity. On the failing live bar, AppKit reported the boundary at the same
+    /// x as adjacent ChatGPT; the old nearest-x lookup therefore changed the seam id from its own
+    /// 17pt window to ChatGPT's 38pt window between planning and verification. Requiring the width
+    /// to match first makes the 17pt boundary unambiguous. The x allowance includes one status-item
+    /// width because AppKit can report the button's leading edge at the hosted window's trailing
+    /// edge while Control Center is reflowing the bar.
+    nonisolated static func matchingWindow(in items: [ObservedItem],
+                                           ownFrame: CGRect) -> ObservedItem? {
+        let widthMatches = items.filter {
+            abs($0.frame.width - ownFrame.width) <= ownWindowWidthTolerance
+        }
+        guard let nearest = widthMatches.min(by: {
+            abs($0.frame.minX - ownFrame.minX) < abs($1.frame.minX - ownFrame.minX)
+        }) else { return nil }
+        let xTolerance = max(ownWindowXTolerance, ownFrame.width + ownWindowXTolerance)
+        guard abs(nearest.frame.minX - ownFrame.minX) <= xTolerance else { return nil }
+        return nearest
+    }
+
+    nonisolated private static let ownWindowWidthTolerance: CGFloat = 2
+    nonisolated private static let ownWindowXTolerance: CGFloat = 6
 
     /// `measuredFrame()`, but polls until the window actually exists.
     ///
