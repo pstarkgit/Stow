@@ -198,6 +198,14 @@ struct StowApp: App {
                         remeasure()
                     }
                     store.pruneUnavailableApps()
+                    let candidateOrder = hider.currentCandidates().map(\.bundleID)
+                    store.ensureProfileLayouts(candidateOrder: candidateOrder)
+                    ProfileHotKeys.shared.register(profiles: store.profiles) { profile in
+                        activateProfile(profile)
+                    }
+                    if let activeProfile = store.activeProfile {
+                        _ = store.apply(activeProfile, candidateOrder: candidateOrder)
+                    }
                     // Create the seam at LAUNCH, not on first panel open.
                     //
                     // Its placement is read from a preference at creation time, so
@@ -300,6 +308,16 @@ struct StowApp: App {
     private func remeasure() {
         snapshot.seamWindows = hider.seamWindowNumbers()
         snapshot.refresh()
+    }
+
+    /// Applies a profile from either the Profiles screen or its global shortcut.
+    private func activateProfile(_ profile: Config.Profile) {
+        let candidateOrder = hider.currentCandidates().map(\.bundleID)
+        let previous = store.config
+        let profileConfig = store.apply(profile, candidateOrder: candidateOrder)
+        let outcome = hider.arrangeByMovingItems(from: profileConfig)
+        if !outcome.isClean { store.config = previous }
+        remeasure()
     }
 
     /// Opens the window on a specific destination, and brings it to the FRONT.

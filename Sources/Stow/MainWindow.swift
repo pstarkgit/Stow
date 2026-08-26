@@ -13,14 +13,8 @@ import ServiceManagement
 /// the bar, checking its health, or configuring the app) rather than one window
 /// per concern.
 ///
-/// Three of the six destinations below front a subsystem this PLAN 0 stage does
-/// not build: dragging a tile between zones needs a persisted store and a spacer
-/// status item that PLAN A builds, and per-key hotkeys need a hotkey manager
-/// that PLAN A also builds. Those destinations still render their real surface
-/// (the measured bar, the four named profiles, the two worked-example rules),
-/// with a visible note that the engine behind them is not yet wired, rather
-/// than a blank pane or a silent stub. The Doctor destination is the one place
-/// in this file where every check is real today.
+/// Arrange and Profiles are live product surfaces backed by the same persisted store and
+/// transactional arranger. Rules remains an explicit preview until its context evaluator ships.
 struct MainWindow: View {
     /// Which destination to show. A `Binding` rather than local `@State`, matching
     /// AuthBar's `MainWindow` exactly: it lets a future caller (the sub-bar's gear,
@@ -526,7 +520,7 @@ private struct ArrangeContentView: View {
                     },
                     zoneOf: { store.config.zone(forBundleID: $0) },
                     onMove: { bundle, zone in
-                        store.config.setZone(zone, forBundleID: bundle)
+                        store.setZone(zone, forBundleID: bundle)
                         // The zone is saved and drawn NOW; the seam move is coalesced. A board
                         // that needed a separate Apply press made the drag feel like it did
                         // nothing, and applying synchronously per drop froze it for seconds.
@@ -900,6 +894,9 @@ private struct ArrangeContentView: View {
 /// from it), so it is gone; every row below reads `store.profiles` directly.
 private struct ProfilesContentView: View {
     @EnvironmentObject var store: Store
+    @EnvironmentObject var hider: HideController
+    @State private var applyingProfileID: String?
+    @State private var registeredShortcutCount = 0
 
     /// The id `AuroraMenu`'s selection binds to. `Config.Profile` is only
     /// `Equatable`, not `Hashable`, and `id` is also the exact field
@@ -912,48 +909,123 @@ private struct ProfilesContentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             PaneHeader(title: "Profiles",
-                       subtitle: "Named layouts for presenting, focusing, or showing everything.")
+                       subtitle: "Switch the whole menu bar instantly or use Command-Shift-1…4.")
 
-            CapabilityNote(symbol: "sparkles",
-                           label: "PREVIEW",
-                           title: "Automatic profile switching is coming later",
-                           detail: "Your selection is saved now. For this release, arrange apps"
-                               + " directly on the Arrange screen.")
+            CapabilityNote(
+                symbol: "bolt.fill",
+                label: "LIVE",
+                title: "Profile switching controls the real menu bar",
+                detail: "\(registeredShortcutCount) global shortcuts registered. Changes made"
+                    + " in Arrange are saved to the active profile.")
 
-            AuroraMenu(
-                options: store.profiles.map { ($0.id, $0.name, $0.hotkeyDisplay) },
-                selection: Binding(
-                    get: { selectedID },
-                    set: { newID in
-                        guard let profile = store.profiles.first(where: { $0.id == newID })
-                        else { return }
-                        store.apply(profile)
-                    }
-                ))
-
-            VStack(spacing: 6) {
+            VStack(spacing: 8) {
                 ForEach(store.profiles) { profile in
-                    HStack {
-                        Text(profile.name)
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(profile.id == selectedID
-                                             ? StowTheme.ink : StowTheme.inkSoft)
-                        Spacer()
-                        Text(profile.hotkeyDisplay)
-                            .font(.system(size: 10.5, design: .monospaced))
-                            .foregroundStyle(StowTheme.inkMuted)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(profile.id == selectedID ? StowTheme.card : Color.clear,
-                                in: RoundedRectangle(cornerRadius: 8))
+                    profileButton(profile)
                 }
             }
-            .padding(8)
-            .background(StowTheme.card, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(StowTheme.hairline))
         }
         .padding(24)
+        .onAppear {
+            store.ensureProfileLayouts(candidateOrder: candidateOrder)
+            registeredShortcutCount = ProfileHotKeys.shared.registeredCount
+        }
+    }
+
+    private var candidateOrder: [String] {
+        hider.currentCandidates().map(\.bundleID)
+    }
+
+    private func profileButton(_ profile: Config.Profile) -> some View {
+        let active = profile.id == selectedID
+        return Button {
+            apply(profile)
+        } label: {
+            HStack(spacing: 12) {
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(active
+                          ? AnyShapeStyle(StowTheme.diagonal(for: .tidy).opacity(0.22))
+                          : AnyShapeStyle(Aurora.inset))
+                    .frame(width: 36, height: 36)
+                    .overlay {
+                        if applyingProfileID == profile.id {
+                            ProgressView().controlSize(.small).tint(StowTheme.blue)
+                        } else {
+                            Image(systemName: profileSymbol(profile))
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(active
+                                                 ? (StowTheme.stops(for: .tidy).first
+                                                    ?? StowTheme.blue)
+                                                 : StowTheme.inkSoft)
+                        }
+                    }
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 7) {
+                        Text(profile.name)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(StowTheme.ink)
+                        if active {
+                            Text("ACTIVE")
+                                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                                .kerning(0.8)
+                                .foregroundStyle(StowTheme.stops(for: .tidy).first
+                                                 ?? StowTheme.blue)
+                        }
+                    }
+                    Text(profileDetail(profile))
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(StowTheme.inkMuted)
+                }
+                Spacer(minLength: 8)
+                Text(profile.hotkeyDisplay)
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(StowTheme.inkSoft)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Aurora.inset, in: RoundedRectangle(cornerRadius: 7))
+                    .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(StowTheme.hairline))
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(active ? StowTheme.cardHover : StowTheme.card,
+                        in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(active
+                              ? (StowTheme.stops(for: .tidy).first ?? StowTheme.blue).opacity(0.38)
+                              : StowTheme.hairline))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(applyingProfileID != nil)
+        .accessibilityLabel("Apply \(profile.name) profile")
+        .accessibilityValue(active ? "Active" : profileDetail(profile))
+    }
+
+    private func apply(_ profile: Config.Profile) {
+        applyingProfileID = profile.id
+        Task { @MainActor in
+            await Task.yield()
+            let previous = store.config
+            let updated = store.apply(profile, candidateOrder: candidateOrder)
+            let outcome = hider.arrangeByMovingItems(from: updated)
+            if !outcome.isClean { store.config = previous }
+            applyingProfileID = nil
+        }
+    }
+
+    private func profileDetail(_ profile: Config.Profile) -> String {
+        let hidden = profile.appZones?.values.filter { $0 == .tucked }.count ?? 0
+        if hidden == 0 { return "Everything visible" }
+        return "\(hidden) app\(hidden == 1 ? "" : "s") in Stow"
+    }
+
+    private func profileSymbol(_ profile: Config.Profile) -> String {
+        switch profile.id {
+        case "presenting": return "rectangle.on.rectangle.slash"
+        case "screen-share": return "rectangle.inset.filled.and.person.filled"
+        case "focus": return "scope"
+        case "everything": return "eye.fill"
+        default: return "square.stack.3d.up.fill"
+        }
     }
 }
 

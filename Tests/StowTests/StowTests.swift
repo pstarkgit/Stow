@@ -420,17 +420,53 @@ import CoreGraphics
 
 // MARK: - Store
 //
-// Store's own responsibility, per the batch contract, is persisting Config
-// and never keying anything to app identity. What is testable without a real
-// window server or a real save round trip through the debounce is the
-// profile-activation contract: it records a choice and nothing more.
+@Test func legacyProfilesSeedProgressivelyFromTheCurrentArrangement() {
+    let order = ["a", "b", "c", "d"]
+    let base = Dictionary(uniqueKeysWithValues: order.map { ($0, Zone.tucked) })
+    let profiles = Store.seededProfiles(
+        profiles: Config.defaultProfiles,
+        baseZones: base,
+        candidateOrder: order)
 
-@Test @MainActor func applyingAProfileRecordsItAsActiveWithoutMovingAnything() {
-    let store = Store(fixtureConfig: .default)
-    let target = Config.defaultProfiles[2]   // "Focus"
-    store.apply(target)
-    #expect(store.config.activeProfileID == target.id)
-    #expect(store.activeProfile?.id == target.id)
+    #expect(profiles.map { $0.appZones?.values.filter { $0 == .tucked }.count } == [4, 3, 1, 0])
+    #expect(profiles[0].appZones == base)
+}
+
+@Test @MainActor func applyingAProfileChangesTheRealZoneConfiguration() {
+    var fixture = Config.default
+    fixture.zoneByBundleID = ["a": .tucked, "b": .tucked, "c": .tucked]
+    let store = Store(fixtureConfig: fixture)
+    let order = ["a", "b", "c"]
+    store.ensureProfileLayouts(candidateOrder: order)
+    let everything = try! #require(store.profiles.first { $0.id == "everything" })
+
+    let applied = store.apply(everything, candidateOrder: order)
+
+    #expect(applied.activeProfileID == "everything")
+    #expect(order.allSatisfy { applied.zone(forBundleID: $0) == .pinned })
+    #expect(applied.spacerRestingLength == everything.spacerLength)
+}
+
+@Test @MainActor func arrangingAnAppUpdatesOnlyTheActiveProfile() throws {
+    var fixture = Config.default
+    fixture.zoneByBundleID = ["a": .tucked, "b": .tucked]
+    let store = Store(fixtureConfig: fixture)
+    store.ensureProfileLayouts(candidateOrder: ["a", "b"])
+    let screenShareBefore = try #require(store.profiles.first { $0.id == "screen-share" })
+
+    store.setZone(.pinned, forBundleID: "a")
+
+    let presenting = try #require(store.profiles.first { $0.id == "presenting" })
+    let screenShareAfter = try #require(store.profiles.first { $0.id == "screen-share" })
+    #expect(presenting.appZones?["a"] == .pinned)
+    #expect(screenShareAfter == screenShareBefore)
+}
+
+@Test func profileHotKeysExposeExactlyFourDistinctNumberKeys() {
+    let keys = (0..<4).compactMap { ProfileHotKeys.keyCode(at: $0) }
+    #expect(keys.count == 4)
+    #expect(Set(keys).count == 4)
+    #expect(ProfileHotKeys.keyCode(at: 4) == nil)
 }
 
 @Test @MainActor func addingAndRemovingARuleUpdatesTheExposedList() {

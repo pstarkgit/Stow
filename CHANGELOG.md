@@ -13,6 +13,14 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.26
+
+- Profiles now switch the real menu-bar arrangement, with Presenting, Screen Share,
+  Focus, and Everything retaining distinct app-zone snapshots.
+- Command-Shift-1 through Command-Shift-4 apply profiles globally, even when the
+  Stow window is closed.
+- Changes made in Arrange are saved automatically to the active profile.
+
 ## 0.1.25
 
 - The menu-bar panel now states exactly how many apps are hidden and offers one

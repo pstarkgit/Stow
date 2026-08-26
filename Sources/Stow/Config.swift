@@ -21,10 +21,9 @@ import Foundation
 /// and `BarItemOwners.claims()` asks every running app for its own `AXExtrasMenuBar`
 /// rather than asking the window server, which is what recovers a real `bundleID`. A
 /// bundle id names the app, not a window or a process id that dies with it, so it
-/// survives a relaunch and is a legitimate persisted key. `zoneByBundleID` below is
-/// that key in use. What still does not exist is a reveal engine that ACTS on it:
-/// `Profile` stores spacer geometry and reveal behaviour, `Rule.Action` targets an
-/// ordinal position or a profile, and moving an item between zones remains later work.
+/// survives a relaunch and is a legitimate persisted key. `zoneByBundleID` and each
+/// profile's `appZones` below are that key in use. Profiles apply those maps through the
+/// same transactional arranger as the editor; context-aware Rules remain later work.
 struct Config: Codable, Equatable, Sendable {
     static let currentSchemaVersion = 1
 
@@ -57,10 +56,9 @@ struct Config: Codable, Equatable, Sendable {
         /// in the tucked run is `appZones` below (or the default spacer position when
         /// unset); this field only says how deep a reveal should go.
         var tuckedRunDepth: Int
-        /// Display form of the hotkey, `"⌘⇧1"`. A plain `String` rather than a
-        /// parsed key combo on purpose: a hotkey manager is PLAN A.4 and does not
-        /// exist yet, so there is nothing to parse this into today. Rendered as-is
-        /// by the Profiles pane.
+        /// Display form of the native global hotkey, `"⌘⇧1"`. Registration remains
+        /// positional (the first four profiles map to 1…4), while this persisted text
+        /// is the user-facing label rendered by the Profiles pane.
         var hotkeyDisplay: String
         /// Per-app zone membership this profile applies, keyed by bundle id. `nil`
         /// means this profile does not decide any app's zone; an app absent from a

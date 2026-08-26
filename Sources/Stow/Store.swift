@@ -14,8 +14,8 @@ import Foundation
 /// `HideController.arrangeByMovingItems`. This used to say the engine downstream did not exist,
 /// which was true when the file was written and is not now.
 ///
-/// What genuinely remains unwired: `apply(_ profile:)` persists `activeProfileID` and nothing else,
-/// and there is no rules engine reading `Config.rules`.
+/// Rules remain persisted-only. Profiles are live: each owns a saved app-zone map, selecting one
+/// applies that map to `Config`, and Arrange edits update only the active profile.
 @MainActor
 final class Store: ObservableObject {
 
@@ -124,18 +124,82 @@ final class Store: ObservableObject {
 
     // MARK: - Profiles
 
-    /// Records `profile` as active and publishes the change.
+    /// Seeds legacy profiles from the current arrangement once.
     ///
-    /// This does NOT move a single status item, and it must not grow to: the
-    /// mechanism that would move one is a reveal engine that PLAN A builds later
-    /// and does not exist yet in this batch. What this method CAN do honestly is
-    /// remember the user's choice, so the Profiles pane can say "selection
-    /// persists" rather than lying about a spacer or reveal it never touches.
-    /// Once that engine lands, it is the one that reads `activeProfile` and acts
-    /// on `spacerLength`/`tuckedRunDepth`; this method's job stops at persisting
-    /// the choice.
-    func apply(_ profile: Config.Profile) {
-        config.activeProfileID = profile.id
+    /// The current arrangement becomes Presenting. Screen Share and Focus reveal the one and
+    /// three tucked apps nearest the boundary; Everything reveals the full tucked run. Persisting
+    /// the generated maps makes every later switch exact rather than recalculating against a bar
+    /// whose apps may have moved.
+    @discardableResult
+    func ensureProfileLayouts(candidateOrder: [String]) -> [Config.Profile] {
+        guard !candidateOrder.isEmpty else { return profiles }
+        let baseZones = Dictionary(uniqueKeysWithValues: candidateOrder.map {
+            ($0, config.zone(forBundleID: $0))
+        })
+        let seeded = Self.seededProfiles(
+            profiles: profiles,
+            baseZones: baseZones,
+            candidateOrder: candidateOrder)
+        var updated = config
+        updated.profiles = seeded
+        if updated.activeProfileID == nil {
+            updated.activeProfileID = seeded.first?.id
+        }
+        if updated != config { config = updated }
+        return seeded
+    }
+
+    nonisolated static func seededProfiles(
+        profiles: [Config.Profile],
+        baseZones: [String: Zone],
+        candidateOrder: [String]
+    ) -> [Config.Profile] {
+        let tucked = candidateOrder.filter { baseZones[$0] == .tucked }
+        return profiles.map { existing in
+            guard existing.appZones == nil else { return existing }
+            var profile = existing
+            var zones = baseZones
+            let revealCount = existing.tuckedRunDepth == Int.max
+                ? tucked.count
+                : min(max(0, existing.tuckedRunDepth), tucked.count)
+            for bundleID in tucked.suffix(revealCount) {
+                zones[bundleID] = .pinned
+            }
+            profile.appZones = zones
+            return profile
+        }
+    }
+
+    /// Activates a saved profile and returns the complete configuration the arranger must apply.
+    @discardableResult
+    func apply(_ requested: Config.Profile, candidateOrder: [String]) -> Config {
+        let seeded = ensureProfileLayouts(candidateOrder: candidateOrder)
+        guard let profile = seeded.first(where: { $0.id == requested.id }) else { return config }
+        var updated = config
+        updated.activeProfileID = profile.id
+        updated.spacerRestingLength = profile.spacerLength
+        if let profileZones = profile.appZones {
+            var zones = updated.zoneByBundleID ?? [:]
+            for (bundleID, zone) in profileZones { zones[bundleID] = zone }
+            updated.zoneByBundleID = zones
+        }
+        config = updated
+        return updated
+    }
+
+    /// Changes one zone and records it in the active profile's snapshot.
+    func setZone(_ zone: Zone, forBundleID bundleID: String) {
+        var updated = config
+        updated.setZone(zone, forBundleID: bundleID)
+        if let activeID = updated.activeProfileID,
+           var profiles = updated.profiles,
+           let index = profiles.firstIndex(where: { $0.id == activeID }) {
+            var zones = profiles[index].appZones ?? (updated.zoneByBundleID ?? [:])
+            zones[bundleID] = zone
+            profiles[index].appZones = zones
+            updated.profiles = profiles
+        }
+        config = updated
     }
 
     // MARK: - Rules
