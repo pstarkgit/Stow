@@ -44,9 +44,9 @@ struct ZoneBoard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            zone(.pinned, title: "ON BAR", subtitle: "always visible")
-            seam(label: "stow boundary")
-            zone(.tucked, title: "IN STOW", subtitle: "hidden at rest, back when opened")
+            zone(.pinned, title: "ON BAR", subtitle: "stays visible")
+            seam(label: "visibility boundary")
+            zone(.tucked, title: "IN STOW", subtitle: "hidden until you need it")
         }
     }
 
@@ -161,12 +161,6 @@ private struct TileView: View {
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(StowTheme.ink)
                     .lineLimit(1)
-                if let caption {
-                    Text(caption)
-                        .font(.system(size: 9))
-                        .foregroundStyle(captionTint)
-                        .lineLimit(1)
-                }
             }
         }
         .padding(.horizontal, 9)
@@ -176,17 +170,6 @@ private struct TileView: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(borderTint, lineWidth: 1))
         .help(helpText)
-    }
-
-    /// The one thing worth saying under the name, chosen by severity rather than stacked.
-    /// Three captions on one tile would be noise; the worst one is the actionable one.
-    private var caption: String? {
-        if !tile.isOnBarNow { return "off the bar" }
-        return nil
-    }
-
-    private var captionTint: Color {
-        return StowTheme.inkMuted
     }
 
     private var borderTint: Color {

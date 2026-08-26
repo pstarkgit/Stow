@@ -203,11 +203,12 @@ struct StatusPanel: View {
     }
 
     private var hiddenStatus: String {
-        guard !hiddenApps.isEmpty else { return "Nothing hidden" }
+        guard !hiddenApps.isEmpty else { return "No apps in Stow" }
+        let count = hiddenApps.count
         switch presentation {
-        case .tidy: return "Bar is tidy"
-        case .revealed: return "Apps shown temporarily"
-        case .everything: return "Everything visible"
+        case .tidy: return "\(count) app\(count == 1 ? "" : "s") hidden"
+        case .revealed: return "All apps visible temporarily"
+        case .everything: return "All apps visible"
         }
     }
 
@@ -253,8 +254,8 @@ struct StatusPanel: View {
         if hiddenApps.isEmpty { return "Add Apps" }
         switch presentation {
         case .tidy: return "Show All"
-        case .revealed: return "Hide All"
-        case .everything: return "Hide Apps"
+        case .revealed: return "Hide Again"
+        case .everything: return "Hide \(hiddenApps.count)"
         }
     }
 
@@ -330,7 +331,7 @@ private struct PanelFooter: View {
                 .labelStyle(.titleAndIcon)
                 .buttonStyle(.plain)
                 .foregroundStyle(StowTheme.inkSoft)
-            Button("Diagnostics", systemImage: "wrench.and.screwdriver", action: diagnostics)
+            Button("Doctor", systemImage: "stethoscope", action: diagnostics)
                 .labelStyle(.titleAndIcon)
                 .buttonStyle(.plain)
                 .foregroundStyle(StowTheme.inkSoft)

@@ -13,6 +13,15 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.25
+
+- The menu-bar panel now states exactly how many apps are hidden and offers one
+  state-aware Show or Hide action without contradictory status text.
+- Arrange saves every drag automatically, removes the redundant Apply step, trims
+  repeated tile metadata, and keeps system-item details collapsed until requested.
+- The opened app now uses native navigation symbols, tighter hierarchy, calm feature
+  previews, and Settings controls limited to behavior that works today.
+
 ## 0.1.24
 
 - Arrangement now waits for each icon to remain in place before moving the next app,

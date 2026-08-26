@@ -59,8 +59,8 @@ struct MainWindow: View {
                 detail
             }
         }
-        .frame(minWidth: 760, idealWidth: 840, maxWidth: .infinity,
-               minHeight: 460, idealHeight: 560, maxHeight: .infinity)
+        .frame(minWidth: 780, idealWidth: 880, maxWidth: .infinity,
+               minHeight: 500, idealHeight: 600, maxHeight: .infinity)
         .background(StowTheme.canvas)
         .preferredColorScheme(.dark)
         .tint(StowTheme.stops(for: .tidy).first ?? StowTheme.blue)
@@ -129,12 +129,7 @@ struct MainWindow: View {
             if NSScreen.screens.count > 1 {
                 AuroraMenu(options: displayOptions, selection: $selectedDisplayID)
             } else {
-                // A picker offering exactly one choice is not a choice; naming the
-                // single attached display plainly is more honest than a dead
-                // dropdown that always opens to one row.
-                Text(selectedScreen?.localizedName ?? "No display")
-                    .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(StowTheme.inkMuted)
+                healthChip
             }
         }
         .padding(.horizontal, 14)
@@ -145,17 +140,36 @@ struct MainWindow: View {
         NSScreen.screens.map { ($0.displayID, $0.localizedName, nil) }
     }
 
+    private var healthChip: some View {
+        let summary = doctor.summary
+        let healthy = summary.issueCount == 0
+        return HStack(spacing: 6) {
+            Circle()
+                .fill(healthy ? (StowTheme.stops(for: .tidy).first ?? StowTheme.blue)
+                              : StowTheme.orange)
+                .frame(width: 6, height: 6)
+                .shadow(color: healthy ? StowTheme.edgeGlow(for: .tidy) : .clear, radius: 3)
+            Text(healthy ? "Healthy" : "\(summary.issueCount) to review")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(healthy ? StowTheme.inkSoft : StowTheme.orange)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(Aurora.raised, in: Capsule())
+        .overlay(Capsule().strokeBorder(StowTheme.hairline))
+    }
+
     // MARK: - Sidebar
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            group("LAYOUT", Destination.layout)
+            group("ORGANIZE", Destination.layout)
             group("HEALTH", Destination.health)
-            group("APP", Destination.app)
+            group("STOW", Destination.app)
             Spacer(minLength: 12)
             utilities
         }
-        .frame(width: 186)
+        .frame(width: 174)
         .background(
             ZStack(alignment: .top) {
                 Color(red: 0.043, green: 0.051, blue: 0.067)
@@ -193,7 +207,7 @@ struct MainWindow: View {
             destination = dest
         } label: {
             HStack(spacing: 9) {
-                Text(dest.glyph)
+                Image(systemName: dest.symbol)
                     .font(.system(size: 12))
                     .frame(width: 15, height: 15)
                     .foregroundStyle(selected
@@ -250,8 +264,6 @@ struct MainWindow: View {
     /// noise a warning badge exists specifically to avoid.
     private func badge(for dest: Destination) -> (count: Int, urgent: Bool)? {
         switch dest {
-        case .profiles:
-            return (Config.defaultProfiles.count, false)
         case .doctor:
             let summary = doctor.summary
             return summary.issueCount > 0 ? (summary.issueCount, summary.hasWarning) : nil
@@ -366,8 +378,8 @@ extension MainWindow {
         var id: String { rawValue }
 
         static let layout: [Destination] = [.arrange, .profiles, .rules]
-        static let health: [Destination] = [.doctor, .whatsNew]
-        static let app: [Destination] = [.settings]
+        static let health: [Destination] = [.doctor]
+        static let app: [Destination] = [.whatsNew, .settings]
 
         var title: String {
             switch self {
@@ -380,16 +392,14 @@ extension MainWindow {
             }
         }
 
-        /// The mock's own glyphs, rendered as text rather than SF Symbols because
-        /// the design specifies these exact characters, not a systemName.
-        var glyph: String {
+        var symbol: String {
             switch self {
-            case .arrange:  return "◫"
-            case .profiles: return "▣"
-            case .rules:    return "⇄"
-            case .doctor:   return "⚗"
-            case .whatsNew: return "✨"
-            case .settings: return "⚙"
+            case .arrange:  return "rectangle.3.group"
+            case .profiles: return "square.stack.3d.up"
+            case .rules:    return "arrow.triangle.2.circlepath"
+            case .doctor:   return "stethoscope"
+            case .whatsNew: return "sparkles"
+            case .settings: return "gearshape"
             }
         }
     }
@@ -422,6 +432,7 @@ private struct ArrangeContentView: View {
     @State private var applyTask: Task<Void, Never>?
     /// Stow's seam window number, so it is excluded from occupancy arithmetic.
     @State private var seamWindows: Set<CGWindowID> = []
+    @State private var showSystemItems = false
 
 
     var body: some View {
@@ -431,7 +442,6 @@ private struct ArrangeContentView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
-                explanation
                 if scan == nil {
                     ProgressView().controlSize(.small).tint(StowTheme.blue)
                 } else {
@@ -451,6 +461,9 @@ private struct ArrangeContentView: View {
                 .foregroundStyle(StowTheme.ink)
             Text("Choose what stays visible and what waits in Stow.")
                 .font(.system(size: 11.5))
+                .foregroundStyle(StowTheme.inkSoft)
+            Text("Drag an app across the boundary. Changes save automatically.")
+                .font(.system(size: 10.5))
                 .foregroundStyle(StowTheme.inkMuted)
         }
     }
@@ -531,7 +544,7 @@ private struct ArrangeContentView: View {
                         $0.userMessage(displayName: Self.displayName(forBundleID:))
                     }.joined(separator: "\n"))
             }
-            applyRow()
+            controlRow()
             systemSummary()
         }
     }
@@ -658,29 +671,44 @@ private struct ArrangeContentView: View {
                 .stroke(StowTheme.orange.opacity(0.45), lineWidth: 1))
     }
 
-    /// Applies the zones, and offers the reveal.
-    ///
-    /// Apply plus the everyday open/close action.
-    private func applyRow() -> some View {
+    /// Changes apply from the board itself. This row reports that state and keeps only the
+    /// everyday show/hide action, avoiding a second Apply button that suggests the drag did not
+    /// already take effect.
+    private func controlRow() -> some View {
         let nothingHidden = !store.config.hidesAnything
-        return HStack(spacing: 10) {
-            Button(nothingHidden ? "Show everything" : "Apply") {
-                apply()
-            }
-            .disabled(movingCut)
-
-            Button(hider.presentation == .revealed ? "Close Stow" : "Open Stow") {
-                hider.toggle()
-                Task { @MainActor in await rescan() }
-            }
-            .disabled(movingCut || nothingHidden)
-            .help("Temporarily returns apps in Stow to the menu bar")
-
+        let hiddenCount = candidateApps().filter {
+            store.config.zone(forBundleID: $0.plan.bundleID) == .tucked
+        }.count
+        return HStack(spacing: 9) {
             if movingCut {
                 ProgressView().controlSize(.small).tint(StowTheme.blue)
+                Text("Updating the menu bar…")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(StowTheme.inkSoft)
+            } else {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(StowTheme.stops(for: .tidy).first ?? StowTheme.blue)
+                Text(nothingHidden
+                     ? "Drag an app into In Stow to begin."
+                     : "Arrangement saved automatically")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(StowTheme.inkSoft)
+            }
+            Spacer(minLength: 8)
+            if !nothingHidden {
+                Button(hider.presentation == .tidy
+                       ? "Show \(hiddenCount) App\(hiddenCount == 1 ? "" : "s")"
+                       : "Hide Again") {
+                    hider.toggle()
+                    Task { @MainActor in await rescan() }
+                }
+                .buttonStyle(.bordered)
+                .disabled(movingCut)
+                .help("Temporarily show or hide the apps assigned to In Stow")
             }
         }
-        .padding(.top, 4)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 4)
     }
 
     /// Apple's own items, collapsed to ONE line.
@@ -707,22 +735,28 @@ private struct ArrangeContentView: View {
 
         return Group {
             if !system.isEmpty {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("\(system.count) system items")
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(StowTheme.inkSoft)
-                    Text("Stow cannot offer these one at a time. macOS reports all of them as"
-                         + " Control Center, and Stow arranges by app, so they would only ever"
-                         + " move together.")
-                        .font(.system(size: 10))
-                        .foregroundStyle(StowTheme.inkMuted)
-                        .fixedSize(horizontal: false, vertical: true)
+                DisclosureGroup(isExpanded: $showSystemItems) {
                     Text(system.map(\.name).joined(separator: " · "))
-                        .font(.system(size: 10))
+                        .font(.system(size: 10.5))
                         .foregroundStyle(StowTheme.inkMuted)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 6)
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: "apple.logo")
+                            .foregroundStyle(StowTheme.inkMuted)
+                        Text("System items stay visible")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(StowTheme.inkSoft)
+                        Text("\(system.count)")
+                            .font(.system(size: 9.5, design: .monospaced))
+                            .foregroundStyle(StowTheme.inkMuted)
+                    }
                 }
-                .padding(.top, 10)
+                .tint(StowTheme.inkMuted)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Aurora.inset, in: RoundedRectangle(cornerRadius: 9))
+                .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(StowTheme.hairline))
             }
         }
     }
@@ -876,16 +910,15 @@ private struct ProfilesContentView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Profiles")
-                .font(.system(size: 19, weight: .bold, design: .rounded))
-                .foregroundStyle(StowTheme.ink)
+        VStack(alignment: .leading, spacing: 18) {
+            PaneHeader(title: "Profiles",
+                       subtitle: "Named layouts for presenting, focusing, or showing everything.")
 
-            NotYetWiredBanner(text: "Applying a profile does not move anything"
-                + " between zones yet: that needs a reveal engine that does not exist."
-                + " The menu below is real and persists through the Store, so your"
-                + " selection survives closing this window; it simply has nothing"
-                + " downstream to act on yet.")
+            CapabilityNote(symbol: "sparkles",
+                           label: "PREVIEW",
+                           title: "Automatic profile switching is coming later",
+                           detail: "Your selection is saved now. For this release, arrange apps"
+                               + " directly on the Arrange screen.")
 
             AuroraMenu(
                 options: store.profiles.map { ($0.id, $0.name, $0.hotkeyDisplay) },
@@ -916,8 +949,11 @@ private struct ProfilesContentView: View {
                                 in: RoundedRectangle(cornerRadius: 8))
                 }
             }
+            .padding(8)
+            .background(StowTheme.card, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(StowTheme.hairline))
         }
-        .padding(20)
+        .padding(24)
     }
 }
 
@@ -932,20 +968,32 @@ private struct RulesContentView: View {
     @EnvironmentObject var store: Store
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Rules")
-                .font(.system(size: 19, weight: .bold, design: .rounded))
-                .foregroundStyle(StowTheme.ink)
+        VStack(alignment: .leading, spacing: 18) {
+            PaneHeader(title: "Rules",
+                       subtitle: "Let context choose the right menu-bar layout for you.")
 
-            NotYetWiredBanner(text: "There is no rules engine yet: nothing below"
-                + " actually watches screen sharing or the frontmost app. This list is"
-                + " read-only and shows exactly what the Store has persisted, which is"
-                + " the shape a rule will take once one can be authored and evaluated.")
+            CapabilityNote(symbol: "wand.and.stars",
+                           label: "PREVIEW",
+                           title: "Context-aware automation is coming later",
+                           detail: "Saved rules appear here, but Stow does not run them yet."
+                               + " Your current menu bar is controlled from Arrange.")
 
             if store.rules.isEmpty {
-                Text("No rules saved yet.")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(StowTheme.inkMuted)
+                VStack(spacing: 8) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 22))
+                        .foregroundStyle(StowTheme.inkMuted)
+                    Text("No rules yet")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(StowTheme.ink)
+                    Text("Rules will appear here when automation ships.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(StowTheme.inkMuted)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 34)
+                .background(StowTheme.card, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(StowTheme.hairline))
             } else {
                 VStack(spacing: 8) {
                     ForEach(store.rules) { rule in
@@ -954,7 +1002,7 @@ private struct RulesContentView: View {
                 }
             }
         }
-        .padding(20)
+        .padding(24)
     }
 
     private func ruleCard(_ rule: Config.Rule) -> some View {
@@ -1025,45 +1073,59 @@ private struct SettingsContentView: View {
     @State private var loginError: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            Text("Settings")
-                .font(.system(size: 19, weight: .bold, design: .rounded))
-                .foregroundStyle(StowTheme.ink)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                PaneHeader(title: "Settings",
+                           subtitle: "Tune the parts of Stow that are active today.")
 
-            settingsSection("HOTKEYS") {
-                NotYetWiredBanner(text: "Hotkey registration needs a hotkey manager,"
-                    + " which is PLAN A and does not exist yet. Nothing here can be"
-                    + " bound to a key until it lands.")
-            }
-
-            settingsSection("BEHAVIOR") {
-                Toggle("Reveal on hover", isOn: Binding(
-                    get: { store.revealOnHoverEnabled },
-                    set: { store.config.revealOnHover = $0 }
-                ))
-                    .toggleStyle(AuroraToggleStyle())
+                settingsSection("HIDDEN APP MENUS") {
                 HStack {
-                    Text("Auto-tuck delay")
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(StowTheme.ink)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Return to Stow after")
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(StowTheme.ink)
+                        Text("How long a temporarily opened app remains visible.")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(StowTheme.inkMuted)
+                    }
                     Spacer()
                     AuroraStepper(value: Binding(
-                        get: { store.autoTuckDelay },
-                        set: { store.config.autoTuckDelaySeconds = $0 }
-                    ), range: 1...15, step: 1,
+                        get: { store.config.revealDuration },
+                        set: { store.config.revealDurationSeconds = $0 }
+                    ), range: 5...60, step: 5,
                        format: { "\(Int($0))s" },
-                       accessibilityName: "Auto-tuck delay")
+                       accessibilityName: "Return to Stow delay")
                 }
-                Text("Both settings above now persist through the Store and survive"
-                     + " closing this window. Reveal on hover still does nothing on"
-                     + " the bar itself: there is no reveal engine to read it back yet,"
-                     + " so it holds your choice and waits.")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(StowTheme.inkMuted)
             }
 
-            settingsSection("LOGIN") {
-                Toggle("Launch at login", isOn: Binding(
+            settingsSection("RECOVERY") {
+                HStack(spacing: 12) {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(StowTheme.diagonal(for: .tidy).opacity(0.18))
+                        .frame(width: 34, height: 34)
+                        .overlay(Image(systemName: "eye.fill")
+                            .foregroundStyle(StowTheme.stops(for: .tidy).first ?? StowTheme.blue))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Show everything")
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(StowTheme.ink)
+                        Text("Immediately returns every hidden app to the menu bar.")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(StowTheme.inkMuted)
+                    }
+                    Spacer()
+                    Text("⌘⇧Esc")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(StowTheme.ink)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(Aurora.inset, in: RoundedRectangle(cornerRadius: 7))
+                        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(StowTheme.hairline))
+                }
+            }
+
+            settingsSection("GENERAL") {
+                Toggle("Launch Stow at login", isOn: Binding(
                     get: { launchAtLoginActual },
                     set: { newValue in
                         loginError = nil
@@ -1073,18 +1135,7 @@ private struct SettingsContentView: View {
                             } else {
                                 try SMAppService.mainApp.unregister()
                             }
-                            // Only commit the new value once macOS has actually
-                            // accepted the request. Setting it optimistically and
-                            // reverting on failure inside the same setter would
-                            // fire this Binding's setter a second time, which is
-                            // both unnecessary and the shape of the exact
-                            // re-entrancy bug this avoids by never assigning
-                            // twice.
                             launchAtLoginActual = newValue
-                            // The user's INTENT, recorded alongside the live status
-                            // above rather than instead of it, so a future reader
-                            // can tell "what was last requested" from "what macOS
-                            // is doing right now" without conflating the two.
                             store.config.launchAtLogin = newValue
                         } catch {
                             loginError = "Could not \(newValue ? "enable" : "disable"):"
@@ -1092,6 +1143,8 @@ private struct SettingsContentView: View {
                         }
                     }
                 ))
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(StowTheme.ink)
                 .toggleStyle(AuroraToggleStyle())
                 if let loginError {
                     Text(loginError)
@@ -1099,8 +1152,29 @@ private struct SettingsContentView: View {
                         .foregroundStyle(StowTheme.orange)
                 }
             }
+
+            settingsSection("ABOUT") {
+                HStack {
+                    Image(nsImage: StowGlyph.image(for: .tidy, size: NSSize(width: 28, height: 28),
+                                                   glow: false))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Stow \(StowVersion.current)")
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(StowTheme.ink)
+                        Text(StowVersion.builderAttribution)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(StowTheme.inkMuted)
+                    }
+                    Spacer()
+                    Text(StowVersion.buildCommit.prefix(7))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(StowTheme.inkMuted)
+                }
+            }
         }
-        .padding(20)
+        .padding(24)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func settingsSection(_ title: String, @ViewBuilder content: () -> some View) -> some View {
@@ -1112,12 +1186,68 @@ private struct SettingsContentView: View {
                     .kerning(1.2)
                 Rectangle().fill(StowTheme.hairline).frame(height: 1)
             }
-            content()
+            VStack(alignment: .leading, spacing: 12) { content() }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(StowTheme.card, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(StowTheme.hairline))
         }
     }
 }
 
 // MARK: - Shared
+
+private struct PaneHeader: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundStyle(StowTheme.ink)
+            Text(subtitle)
+                .font(.system(size: 11.5))
+                .foregroundStyle(StowTheme.inkSoft)
+        }
+    }
+}
+
+private struct CapabilityNote: View {
+    let symbol: String
+    let label: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 11) {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(StowTheme.blue.opacity(0.10))
+                .frame(width: 32, height: 32)
+                .overlay(Image(systemName: symbol)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(StowTheme.blue))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(label)
+                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .kerning(1.1)
+                    .foregroundStyle(StowTheme.blue)
+                Text(title)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(StowTheme.ink)
+                Text(detail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(StowTheme.inkSoft)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(13)
+        .background(StowTheme.blue.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12)
+            .strokeBorder(StowTheme.blue.opacity(0.18)))
+    }
+}
 
 /// A visible, honest note that the engine behind a rendered surface is not yet
 /// wired. Used across Arrange, Profiles, Rules and Settings rather than a silent
