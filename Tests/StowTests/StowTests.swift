@@ -469,6 +469,52 @@ import CoreGraphics
     #expect(ProfileHotKeys.keyCode(at: 4) == nil)
 }
 
+@Test @MainActor func newProfileCapturesCurrentLayoutAndBecomesActive() {
+    var fixture = Config.default
+    fixture.zoneByBundleID = ["a": .pinned, "b": .tucked]
+    let store = Store(fixtureConfig: fixture)
+
+    let created = store.createProfile(name: "Travel", candidateOrder: ["a", "b"])
+
+    #expect(created.name == "Travel")
+    #expect(created.hotkeyDisplay.isEmpty)
+    #expect(created.appZones == ["a": .pinned, "b": .tucked])
+    #expect(store.activeProfile?.id == created.id)
+}
+
+@Test @MainActor func renameDuplicateAndDeletePreserveBuiltInProfiles() throws {
+    let store = Store(fixtureConfig: .default)
+    store.ensureProfileLayouts(candidateOrder: ["a"])
+    let presenting = try #require(store.profiles.first { $0.id == "presenting" })
+    let copy = try #require(store.duplicateProfile(id: presenting.id))
+
+    store.renameProfile(id: copy.id, name: "  Client Demo  ")
+    #expect(store.activeProfile?.name == "Client Demo")
+    #expect(store.activeProfile?.hotkeyDisplay == "")
+    #expect(store.deleteProfile(id: "presenting") != nil)
+    #expect(store.profiles.contains { $0.id == "presenting" })
+
+    _ = store.deleteProfile(id: copy.id)
+    #expect(!store.profiles.contains { $0.id == copy.id })
+    #expect(store.activeProfile?.id == "presenting")
+}
+
+@Test @MainActor func saveCurrentLayoutUpdatesOnlyTheSelectedProfile() throws {
+    var fixture = Config.default
+    fixture.zoneByBundleID = ["a": .tucked]
+    let store = Store(fixtureConfig: fixture)
+    store.ensureProfileLayouts(candidateOrder: ["a"])
+    let focusBefore = try #require(store.profiles.first { $0.id == "focus" })
+
+    store.config.setZone(.pinned, forBundleID: "a")
+    store.saveCurrentLayout(profileID: "presenting", candidateOrder: ["a"])
+
+    let presenting = try #require(store.profiles.first { $0.id == "presenting" })
+    let focusAfter = try #require(store.profiles.first { $0.id == "focus" })
+    #expect(presenting.appZones?["a"] == .pinned)
+    #expect(focusAfter == focusBefore)
+}
+
 @Test @MainActor func addingAndRemovingARuleUpdatesTheExposedList() {
     let store = Store(fixtureConfig: .default)
     #expect(store.rules.isEmpty)

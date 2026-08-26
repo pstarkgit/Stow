@@ -202,6 +202,86 @@ final class Store: ObservableObject {
         config = updated
     }
 
+    static let builtInProfileIDs: Set<String> = [
+        "presenting", "screen-share", "focus", "everything",
+    ]
+
+    @discardableResult
+    func createProfile(name: String, candidateOrder: [String]) -> Config.Profile {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedName = trimmed.isEmpty ? "New Profile" : trimmed
+        let zones = Dictionary(uniqueKeysWithValues: candidateOrder.map {
+            ($0, config.zone(forBundleID: $0))
+        })
+        let profile = Config.Profile(
+            id: "custom-\(UUID().uuidString.lowercased())",
+            name: resolvedName,
+            spacerLength: config.spacerRestingLengthPoints,
+            tuckedRunDepth: zones.values.filter { $0 == .pinned }.count,
+            hotkeyDisplay: "",
+            appZones: zones)
+        var updated = config
+        var profiles = updated.profileList
+        profiles.append(profile)
+        updated.profiles = profiles
+        updated.activeProfileID = profile.id
+        config = updated
+        return profile
+    }
+
+    func renameProfile(id: String, name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var updated = config
+        var profiles = updated.profileList
+        guard let index = profiles.firstIndex(where: { $0.id == id }) else { return }
+        profiles[index].name = trimmed
+        updated.profiles = profiles
+        config = updated
+    }
+
+    @discardableResult
+    func duplicateProfile(id: String) -> Config.Profile? {
+        var updated = config
+        var profiles = updated.profileList
+        guard var copy = profiles.first(where: { $0.id == id }) else { return nil }
+        copy.id = "custom-\(UUID().uuidString.lowercased())"
+        copy.name += " Copy"
+        copy.hotkeyDisplay = ""
+        profiles.append(copy)
+        updated.profiles = profiles
+        updated.activeProfileID = copy.id
+        config = updated
+        return copy
+    }
+
+    @discardableResult
+    func deleteProfile(id: String) -> String? {
+        guard !Self.builtInProfileIDs.contains(id) else { return config.activeProfileID }
+        var updated = config
+        var profiles = updated.profileList
+        guard profiles.contains(where: { $0.id == id }) else { return updated.activeProfileID }
+        profiles.removeAll { $0.id == id }
+        updated.profiles = profiles
+        if updated.activeProfileID == id {
+            updated.activeProfileID = profiles.first?.id
+        }
+        config = updated
+        return updated.activeProfileID
+    }
+
+    func saveCurrentLayout(profileID: String, candidateOrder: [String]) {
+        var updated = config
+        var profiles = updated.profileList
+        guard let index = profiles.firstIndex(where: { $0.id == profileID }) else { return }
+        profiles[index].appZones = Dictionary(uniqueKeysWithValues: candidateOrder.map {
+            ($0, updated.zone(forBundleID: $0))
+        })
+        profiles[index].spacerLength = updated.spacerRestingLengthPoints
+        updated.profiles = profiles
+        config = updated
+    }
+
     // MARK: - Rules
     //
     // Persist and expose only. There is no rules engine in this batch to evaluate

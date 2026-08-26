@@ -898,6 +898,7 @@ private struct ProfilesContentView: View {
     @EnvironmentObject var ruleEngine: RuleEngine
     @State private var applyingProfileID: String?
     @State private var registeredShortcutCount = 0
+    @State private var draftName = ""
 
     /// The id `AuroraMenu`'s selection binds to. `Config.Profile` is only
     /// `Equatable`, not `Hashable`, and `id` is also the exact field
@@ -908,32 +909,86 @@ private struct ProfilesContentView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            PaneHeader(title: "Profiles",
-                       subtitle: "Switch the whole menu bar instantly or use Command-Shift-1…4.")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                PaneHeader(title: "Profiles",
+                           subtitle: "Switch the whole menu bar instantly or use Command-Shift-1…4.")
 
-            CapabilityNote(
-                symbol: "bolt.fill",
-                label: "LIVE",
-                title: "Profile switching controls the real menu bar",
-                detail: "\(registeredShortcutCount) global shortcuts registered. Changes made"
-                    + " in Arrange are saved to the active profile.")
+                CapabilityNote(
+                    symbol: "bolt.fill",
+                    label: "LIVE",
+                    title: "Profile switching controls the real menu bar",
+                    detail: "\(registeredShortcutCount) global shortcuts registered. Changes made"
+                        + " in Arrange are saved to the active profile.")
 
-            VStack(spacing: 8) {
-                ForEach(store.profiles) { profile in
-                    profileButton(profile)
+                editorControls
+
+                VStack(spacing: 8) {
+                    ForEach(store.profiles) { profile in
+                        profileButton(profile)
+                    }
                 }
             }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(24)
         .onAppear {
             store.ensureProfileLayouts(candidateOrder: candidateOrder)
             registeredShortcutCount = ProfileHotKeys.shared.registeredCount
+            draftName = activeProfile?.name ?? ""
+        }
+        .onChange(of: selectedID) { _, _ in
+            draftName = activeProfile?.name ?? ""
         }
     }
 
     private var candidateOrder: [String] {
         hider.currentCandidates().map(\.bundleID)
+    }
+
+    private var activeProfile: Config.Profile? {
+        store.profiles.first { $0.id == selectedID }
+    }
+
+    private var editorControls: some View {
+        HStack(spacing: 8) {
+            TextField("Profile name", text: $draftName)
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .frame(maxWidth: 240)
+                .background(Aurora.inset, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(StowTheme.hairline))
+                .onSubmit { renameActive() }
+            Button("Rename") { renameActive() }
+                .buttonStyle(.bordered)
+                .disabled(activeProfile == nil || draftName.trimmingCharacters(
+                    in: .whitespacesAndNewlines).isEmpty)
+            Button("Save Current", systemImage: "square.and.arrow.down") {
+                guard let activeProfile else { return }
+                store.saveCurrentLayout(profileID: activeProfile.id,
+                                        candidateOrder: candidateOrder)
+            }
+            .buttonStyle(.bordered)
+            Spacer(minLength: 8)
+            Menu {
+                Button("New Profile", systemImage: "plus") { createProfile() }
+                Button("Duplicate Active", systemImage: "plus.square.on.square") {
+                    duplicateActive()
+                }
+                if let activeProfile,
+                   !Store.builtInProfileIDs.contains(activeProfile.id) {
+                    Divider()
+                    Button("Delete Active", systemImage: "trash", role: .destructive) {
+                        deleteActive()
+                    }
+                }
+            } label: {
+                Label("Profile Actions", systemImage: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+        }
     }
 
     private func profileButton(_ profile: Config.Profile) -> some View {
@@ -977,8 +1032,10 @@ private struct ProfilesContentView: View {
                         .foregroundStyle(StowTheme.inkMuted)
                 }
                 Spacer(minLength: 8)
-                Text(profile.hotkeyDisplay)
-                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                Text(profile.hotkeyDisplay.isEmpty ? "CUSTOM" : profile.hotkeyDisplay)
+                    .font(.system(size: profile.hotkeyDisplay.isEmpty ? 8.5 : 10.5,
+                                  weight: .semibold, design: .monospaced))
+                    .kerning(profile.hotkeyDisplay.isEmpty ? 0.7 : 0)
                     .foregroundStyle(StowTheme.inkSoft)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
@@ -1028,6 +1085,35 @@ private struct ProfilesContentView: View {
         case "everything": return "eye.fill"
         default: return "square.stack.3d.up.fill"
         }
+    }
+
+    private func renameActive() {
+        guard let activeProfile else { return }
+        store.renameProfile(id: activeProfile.id, name: draftName)
+    }
+
+    private func createProfile() {
+        ruleEngine.noteManualSelection()
+        let profile = store.createProfile(name: "New Profile", candidateOrder: candidateOrder)
+        draftName = profile.name
+    }
+
+    private func duplicateActive() {
+        guard let activeProfile else { return }
+        ruleEngine.noteManualSelection()
+        if let copy = store.duplicateProfile(id: activeProfile.id) {
+            draftName = copy.name
+        }
+    }
+
+    private func deleteActive() {
+        guard let activeProfile else { return }
+        ruleEngine.noteManualSelection()
+        let nextID = store.deleteProfile(id: activeProfile.id)
+        guard let nextID,
+              let next = store.profiles.first(where: { $0.id == nextID }) else { return }
+        draftName = next.name
+        apply(next)
     }
 }
 

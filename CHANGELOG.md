@@ -13,6 +13,13 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.28
+
+- Profiles can now be created, renamed, duplicated, and saved from the current
+  arrangement; custom profiles can be deleted without remapping built-in shortcuts.
+- The Profiles screen is scrollable and exposes one compact editing toolbar.
+- Built-in profiles remain protected so Command-Shift-1 through 4 stay stable.
+
 ## 0.1.27
 
 - Rules can now apply a profile when a chosen application becomes frontmost and
