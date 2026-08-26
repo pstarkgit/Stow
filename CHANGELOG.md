@@ -13,6 +13,14 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.27
+
+- Rules can now apply a profile when a chosen application becomes frontmost and
+  restore the previous profile when that application loses focus.
+- Manual profile selections temporarily override the matching automatic rule until
+  the user switches to another application.
+- The Rules screen now creates, enables, disables, and removes live automation rules.
+
 ## 0.1.26
 
 - Profiles now switch the real menu-bar arrangement, with Presenting, Screen Share,

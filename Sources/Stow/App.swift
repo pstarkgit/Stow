@@ -20,6 +20,7 @@ struct StowApp: App {
     /// measured width in the WINDOW scene while the panel drives it from the MENU BAR
     /// scene, and both must see the same seam.
     @StateObject private var hider = HideController()
+    @StateObject private var ruleEngine = RuleEngine()
     /// Owns the temporary reveal-then-retuck for one tucked item at a time, driven by
     /// `onOpenHidden` below.
     ///
@@ -201,7 +202,8 @@ struct StowApp: App {
                     let candidateOrder = hider.currentCandidates().map(\.bundleID)
                     store.ensureProfileLayouts(candidateOrder: candidateOrder)
                     ProfileHotKeys.shared.register(profiles: store.profiles) { profile in
-                        activateProfile(profile)
+                        ruleEngine.noteManualSelection()
+                        _ = activateProfile(profile)
                     }
                     if let activeProfile = store.activeProfile {
                         _ = store.apply(activeProfile, candidateOrder: candidateOrder)
@@ -229,6 +231,14 @@ struct StowApp: App {
                     // the user never selected.
                     hider.arrangeByMovingItems(from: store.config)
                     remeasure()
+                    ruleEngine.start(
+                        rules: { store.rules },
+                        activeProfileID: { store.activeProfile?.id },
+                        applyProfile: { profileID in
+                            guard let profile = store.profiles.first(where: { $0.id == profileID })
+                            else { return false }
+                            return activateProfile(profile)
+                        })
 
                     // Quiet check at launch, then every six hours, matching
                     // AuthBar. On the label so it starts without waiting for the
@@ -289,6 +299,7 @@ struct StowApp: App {
                 // would each own a seam and contend over the bar's layout, which is
                 // the exact failure mode two competing managers produce.
                 .environmentObject(hider)
+                .environmentObject(ruleEngine)
         }
         .windowResizability(.contentMinSize)
         .defaultPosition(.center)
@@ -311,13 +322,15 @@ struct StowApp: App {
     }
 
     /// Applies a profile from either the Profiles screen or its global shortcut.
-    private func activateProfile(_ profile: Config.Profile) {
+    @discardableResult
+    private func activateProfile(_ profile: Config.Profile) -> Bool {
         let candidateOrder = hider.currentCandidates().map(\.bundleID)
         let previous = store.config
         let profileConfig = store.apply(profile, candidateOrder: candidateOrder)
         let outcome = hider.arrangeByMovingItems(from: profileConfig)
         if !outcome.isClean { store.config = previous }
         remeasure()
+        return outcome.isClean
     }
 
     /// Opens the window on a specific destination, and brings it to the FRONT.

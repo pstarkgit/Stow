@@ -29,7 +29,7 @@ enum StowVersion {
     /// rather than asking politely.
     ///
     /// Major essentially never for a personal menu bar tool.
-    static let current = "0.1.26"
+    static let current = "0.1.27"
 
     /// The minor line this project stays on until it releases.
     ///

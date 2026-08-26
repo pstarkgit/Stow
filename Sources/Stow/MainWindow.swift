@@ -895,6 +895,7 @@ private struct ArrangeContentView: View {
 private struct ProfilesContentView: View {
     @EnvironmentObject var store: Store
     @EnvironmentObject var hider: HideController
+    @EnvironmentObject var ruleEngine: RuleEngine
     @State private var applyingProfileID: String?
     @State private var registeredShortcutCount = 0
 
@@ -1002,6 +1003,7 @@ private struct ProfilesContentView: View {
 
     private func apply(_ profile: Config.Profile) {
         applyingProfileID = profile.id
+        ruleEngine.noteManualSelection()
         Task { @MainActor in
             await Task.yield()
             let previous = store.config
@@ -1038,6 +1040,9 @@ private struct ProfilesContentView: View {
 /// not illustrative text that never matched what was actually saved.
 private struct RulesContentView: View {
     @EnvironmentObject var store: Store
+    @EnvironmentObject var ruleEngine: RuleEngine
+    @State private var selectedBundleID = ""
+    @State private var selectedProfileID = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -1045,10 +1050,24 @@ private struct RulesContentView: View {
                        subtitle: "Let context choose the right menu-bar layout for you.")
 
             CapabilityNote(symbol: "wand.and.stars",
-                           label: "PREVIEW",
-                           title: "Context-aware automation is coming later",
-                           detail: "Saved rules appear here, but Stow does not run them yet."
-                               + " Your current menu bar is controlled from Arrange.")
+                           label: ruleEngine.activeRuleID == nil ? "LIVE" : "ACTIVE",
+                           title: "Frontmost-app automation is running",
+                           detail: ruleEngine.lastStatus)
+
+            HStack(spacing: 9) {
+                AuroraMenu(options: appOptions,
+                           selection: $selectedBundleID,
+                           placeholder: "Choose app")
+                Image(systemName: "arrow.right")
+                    .foregroundStyle(StowTheme.inkMuted)
+                AuroraMenu(options: profileOptions,
+                           selection: $selectedProfileID,
+                           placeholder: "Choose profile")
+                Spacer(minLength: 8)
+                Button("Add Rule", systemImage: "plus") { addRule() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(selectedBundleID.isEmpty || selectedProfileID.isEmpty)
+            }
 
             if store.rules.isEmpty {
                 VStack(spacing: 8) {
@@ -1058,7 +1077,7 @@ private struct RulesContentView: View {
                     Text("No rules yet")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(StowTheme.ink)
-                    Text("Rules will appear here when automation ships.")
+                    Text("Choose a running app and the profile Stow should apply.")
                         .font(.system(size: 11))
                         .foregroundStyle(StowTheme.inkMuted)
                 }
@@ -1075,27 +1094,42 @@ private struct RulesContentView: View {
             }
         }
         .padding(24)
+        .onAppear {
+            if selectedBundleID.isEmpty { selectedBundleID = appOptions.first?.value ?? "" }
+            if selectedProfileID.isEmpty {
+                selectedProfileID = store.activeProfile?.id ?? store.profiles.first?.id ?? ""
+            }
+        }
     }
 
     private func ruleCard(_ rule: Config.Rule) -> some View {
-        HStack(spacing: 10) {
-            Text(describe(rule.condition))
-                .font(.system(size: 12))
-                .foregroundStyle(rule.isEnabled ? StowTheme.ink : StowTheme.inkMuted)
-            Image(systemName: "arrow.right")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(StowTheme.inkMuted)
-            Text(describe(rule.action))
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(rule.isEnabled
-                                 ? AnyShapeStyle(StowTheme.sweep(for: .tidy))
-                                 : AnyShapeStyle(StowTheme.inkMuted))
-            if !rule.isEnabled {
-                Spacer(minLength: 0)
-                Text("disabled")
-                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                    .foregroundStyle(StowTheme.inkMuted)
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(ruleEngine.activeRuleID == rule.id
+                      ? StowTheme.blue.opacity(0.16) : Aurora.inset)
+                .frame(width: 34, height: 34)
+                .overlay(Image(systemName: "app.badge.checkmark")
+                    .foregroundStyle(ruleEngine.activeRuleID == rule.id
+                                     ? StowTheme.blue : StowTheme.inkSoft))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(describe(rule.condition))
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(rule.isEnabled ? StowTheme.ink : StowTheme.inkMuted)
+                Text(describe(rule.action))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(StowTheme.inkSoft)
             }
+            Spacer(minLength: 8)
+            Toggle("Enabled", isOn: Binding(
+                get: { rule.isEnabled },
+                set: { store.setRule(id: rule.id, isEnabled: $0) }
+            ))
+            .labelsHidden()
+            .toggleStyle(AuroraToggleStyle())
+            Button("Delete", systemImage: "trash") { store.removeRule(id: rule.id) }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
+                .foregroundStyle(StowTheme.inkMuted)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -1108,16 +1142,57 @@ private struct RulesContentView: View {
         switch condition {
         case .screenSharingStarted: return "Screen sharing starts"
         case .screenSharingEnded: return "Screen sharing ends"
-        case .frontmostAppIs(let bundleID): return "\(bundleID) is frontmost"
+        case .frontmostAppIs(let bundleID): return "When \(displayName(bundleID)) is frontmost"
         }
     }
 
     private func describe(_ action: Config.Rule.Action) -> String {
         switch action {
-        case .applyProfile(let id): return "Apply profile \"\(id)\""
+        case .applyProfile(let id):
+            let name = store.profiles.first(where: { $0.id == id })?.name ?? id
+            return "Apply \(name), then restore the previous profile on exit"
         case .revealTuckedSlot(let depth): return "Reveal tucked slot \(depth)"
         case .tuckPinnedSlot(let depth): return "Tuck pinned slot \(depth)"
         }
+    }
+
+    private var appOptions: [(value: String, label: String, shortcut: String?)] {
+        var seen = Set<String>()
+        return NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular }
+            .compactMap { app -> (value: String, label: String, shortcut: String?)? in
+                guard let bundleID = app.bundleIdentifier,
+                      bundleID != Bundle.main.bundleIdentifier,
+                      seen.insert(bundleID).inserted else { return nil }
+                return (bundleID, app.localizedName ?? bundleID, nil)
+            }
+            .sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
+    }
+
+    private var profileOptions: [(value: String, label: String, shortcut: String?)] {
+        store.profiles.map { ($0.id, $0.name, $0.hotkeyDisplay) }
+    }
+
+    private func addRule() {
+        for existing in store.rules {
+            if case .frontmostAppIs(let bundleID) = existing.condition,
+               bundleID == selectedBundleID {
+                store.removeRule(id: existing.id)
+            }
+        }
+        store.addRule(.init(
+            id: "frontmost:\(selectedBundleID)",
+            isEnabled: true,
+            condition: .frontmostAppIs(bundleID: selectedBundleID),
+            action: .applyProfile(id: selectedProfileID)))
+    }
+
+    private func displayName(_ bundleID: String) -> String {
+        NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .first?.localizedName
+            ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+                .map { FileManager.default.displayName(atPath: $0.path) }
+            ?? bundleID
     }
 }
 
