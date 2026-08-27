@@ -13,6 +13,47 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.29
+
+- The first built-in profile is now Default and captures the configured starting
+  arrangement; existing untouched Presenting profiles migrate without changing IDs.
+- The menu-bar panel now shows the active profile, switches profiles directly, and
+  offers one-step Undo after a profile change.
+- Doctor now verifies all four profile shortcuts and the running automation engine.
+- Failed profile arrangements restore both the prior configuration and Undo state.
+
+## 0.1.28
+
+- Profiles can now be created, renamed, duplicated, and saved from the current
+  arrangement; custom profiles can be deleted without remapping built-in shortcuts.
+- The Profiles screen is scrollable and exposes one compact editing toolbar.
+- Built-in profiles remain protected so Command-Shift-1 through 4 stay stable.
+
+## 0.1.27
+
+- Rules can now apply a profile when a chosen application becomes frontmost and
+  restore the previous profile when that application loses focus.
+- Manual profile selections temporarily override the matching automatic rule until
+  the user switches to another application.
+- The Rules screen now creates, enables, disables, and removes live automation rules.
+
+## 0.1.26
+
+- Profiles now switch the real menu-bar arrangement, with Presenting, Screen Share,
+  Focus, and Everything retaining distinct app-zone snapshots.
+- Command-Shift-1 through Command-Shift-4 apply profiles globally, even when the
+  Stow window is closed.
+- Changes made in Arrange are saved automatically to the active profile.
+
+## 0.1.25
+
+- The menu-bar panel now states exactly how many apps are hidden and offers one
+  state-aware Show or Hide action without contradictory status text.
+- Arrange saves every drag automatically, removes the redundant Apply step, trims
+  repeated tile metadata, and keeps system-item details collapsed until requested.
+- The opened app now uses native navigation symbols, tighter hierarchy, calm feature
+  previews, and Settings controls limited to behavior that works today.
+
 ## 0.1.24
 
 - Arrangement now waits for each icon to remain in place before moving the next app,

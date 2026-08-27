@@ -14,8 +14,8 @@ import Foundation
 /// `HideController.arrangeByMovingItems`. This used to say the engine downstream did not exist,
 /// which was true when the file was written and is not now.
 ///
-/// What genuinely remains unwired: `apply(_ profile:)` persists `activeProfileID` and nothing else,
-/// and there is no rules engine reading `Config.rules`.
+/// Rules remain persisted-only. Profiles are live: each owns a saved app-zone map, selecting one
+/// applies that map to `Config`, and Arrange edits update only the active profile.
 @MainActor
 final class Store: ObservableObject {
 
@@ -29,6 +29,7 @@ final class Store: ObservableObject {
     @Published var config: Config {
         didSet { scheduleSave() }
     }
+    @Published private(set) var undoProfileID: String?
 
     /// The in-flight debounce, held as a `Task` rather than an `NSObjectProtocol`
     /// observer token or a `Timer`.
@@ -50,6 +51,7 @@ final class Store: ObservableObject {
         var loaded = Config.load()
         let removed = loaded.pruneUnavailableApps(isAvailable: Self.appIsAvailable)
         config = loaded
+        undoProfileID = nil
         for bundleID in removed { BarHomes.forget(bundleID) }
         if !removed.isEmpty { try? loaded.save() }
     }
@@ -60,6 +62,7 @@ final class Store: ObservableObject {
     /// `init()`.
     init(fixtureConfig: Config) {
         config = fixtureConfig
+        undoProfileID = nil
     }
 
     deinit {
@@ -124,18 +127,187 @@ final class Store: ObservableObject {
 
     // MARK: - Profiles
 
-    /// Records `profile` as active and publishes the change.
+    /// Seeds legacy profiles from the current arrangement once.
     ///
-    /// This does NOT move a single status item, and it must not grow to: the
-    /// mechanism that would move one is a reveal engine that PLAN A builds later
-    /// and does not exist yet in this batch. What this method CAN do honestly is
-    /// remember the user's choice, so the Profiles pane can say "selection
-    /// persists" rather than lying about a spacer or reveal it never touches.
-    /// Once that engine lands, it is the one that reads `activeProfile` and acts
-    /// on `spacerLength`/`tuckedRunDepth`; this method's job stops at persisting
-    /// the choice.
-    func apply(_ profile: Config.Profile) {
-        config.activeProfileID = profile.id
+    /// The current arrangement becomes Presenting. Screen Share and Focus reveal the one and
+    /// three tucked apps nearest the boundary; Everything reveals the full tucked run. Persisting
+    /// the generated maps makes every later switch exact rather than recalculating against a bar
+    /// whose apps may have moved.
+    @discardableResult
+    func ensureProfileLayouts(candidateOrder: [String]) -> [Config.Profile] {
+        guard !candidateOrder.isEmpty else { return profiles }
+        let baseZones = Dictionary(uniqueKeysWithValues: candidateOrder.map {
+            ($0, config.zone(forBundleID: $0))
+        })
+        let renamed = profiles.map { existing -> Config.Profile in
+            var profile = existing
+            if profile.id == "presenting", profile.name == "Presenting" {
+                profile.name = "Default"
+            }
+            return profile
+        }
+        let seeded = Self.seededProfiles(
+            profiles: renamed,
+            baseZones: baseZones,
+            candidateOrder: candidateOrder)
+        var updated = config
+        updated.profiles = seeded
+        if updated.activeProfileID == nil {
+            updated.activeProfileID = seeded.first?.id
+        }
+        if updated != config { config = updated }
+        return seeded
+    }
+
+    nonisolated static func seededProfiles(
+        profiles: [Config.Profile],
+        baseZones: [String: Zone],
+        candidateOrder: [String]
+    ) -> [Config.Profile] {
+        let tucked = candidateOrder.filter { baseZones[$0] == .tucked }
+        return profiles.map { existing in
+            guard existing.appZones == nil else { return existing }
+            var profile = existing
+            var zones = baseZones
+            let revealCount = existing.tuckedRunDepth == Int.max
+                ? tucked.count
+                : min(max(0, existing.tuckedRunDepth), tucked.count)
+            for bundleID in tucked.suffix(revealCount) {
+                zones[bundleID] = .pinned
+            }
+            profile.appZones = zones
+            return profile
+        }
+    }
+
+    /// Activates a saved profile and returns the complete configuration the arranger must apply.
+    @discardableResult
+    func apply(_ requested: Config.Profile,
+               candidateOrder: [String],
+               recordUndo: Bool = true) -> Config {
+        let seeded = ensureProfileLayouts(candidateOrder: candidateOrder)
+        guard let profile = seeded.first(where: { $0.id == requested.id }) else { return config }
+        var updated = config
+        if recordUndo, updated.activeProfileID != profile.id {
+            undoProfileID = updated.activeProfileID
+        }
+        updated.activeProfileID = profile.id
+        updated.spacerRestingLength = profile.spacerLength
+        if let profileZones = profile.appZones {
+            var zones = updated.zoneByBundleID ?? [:]
+            for (bundleID, zone) in profileZones { zones[bundleID] = zone }
+            updated.zoneByBundleID = zones
+        }
+        config = updated
+        return updated
+    }
+
+    @discardableResult
+    func undoProfile(candidateOrder: [String]) -> Config? {
+        guard let undoProfileID,
+              let profile = profiles.first(where: { $0.id == undoProfileID }) else { return nil }
+        self.undoProfileID = nil
+        return apply(profile, candidateOrder: candidateOrder, recordUndo: false)
+    }
+
+    func restoreProfileState(config: Config, undoProfileID: String?) {
+        self.config = config
+        self.undoProfileID = undoProfileID
+    }
+
+    /// Changes one zone and records it in the active profile's snapshot.
+    func setZone(_ zone: Zone, forBundleID bundleID: String) {
+        var updated = config
+        updated.setZone(zone, forBundleID: bundleID)
+        if let activeID = updated.activeProfileID,
+           var profiles = updated.profiles,
+           let index = profiles.firstIndex(where: { $0.id == activeID }) {
+            var zones = profiles[index].appZones ?? (updated.zoneByBundleID ?? [:])
+            zones[bundleID] = zone
+            profiles[index].appZones = zones
+            updated.profiles = profiles
+        }
+        config = updated
+    }
+
+    static let builtInProfileIDs: Set<String> = [
+        "presenting", "screen-share", "focus", "everything",
+    ]
+
+    @discardableResult
+    func createProfile(name: String, candidateOrder: [String]) -> Config.Profile {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedName = trimmed.isEmpty ? "New Profile" : trimmed
+        let zones = Dictionary(uniqueKeysWithValues: candidateOrder.map {
+            ($0, config.zone(forBundleID: $0))
+        })
+        let profile = Config.Profile(
+            id: "custom-\(UUID().uuidString.lowercased())",
+            name: resolvedName,
+            spacerLength: config.spacerRestingLengthPoints,
+            tuckedRunDepth: zones.values.filter { $0 == .pinned }.count,
+            hotkeyDisplay: "",
+            appZones: zones)
+        var updated = config
+        var profiles = updated.profileList
+        profiles.append(profile)
+        updated.profiles = profiles
+        updated.activeProfileID = profile.id
+        config = updated
+        return profile
+    }
+
+    func renameProfile(id: String, name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var updated = config
+        var profiles = updated.profileList
+        guard let index = profiles.firstIndex(where: { $0.id == id }) else { return }
+        profiles[index].name = trimmed
+        updated.profiles = profiles
+        config = updated
+    }
+
+    @discardableResult
+    func duplicateProfile(id: String) -> Config.Profile? {
+        var updated = config
+        var profiles = updated.profileList
+        guard var copy = profiles.first(where: { $0.id == id }) else { return nil }
+        copy.id = "custom-\(UUID().uuidString.lowercased())"
+        copy.name += " Copy"
+        copy.hotkeyDisplay = ""
+        profiles.append(copy)
+        updated.profiles = profiles
+        updated.activeProfileID = copy.id
+        config = updated
+        return copy
+    }
+
+    @discardableResult
+    func deleteProfile(id: String) -> String? {
+        guard !Self.builtInProfileIDs.contains(id) else { return config.activeProfileID }
+        var updated = config
+        var profiles = updated.profileList
+        guard profiles.contains(where: { $0.id == id }) else { return updated.activeProfileID }
+        profiles.removeAll { $0.id == id }
+        updated.profiles = profiles
+        if updated.activeProfileID == id {
+            updated.activeProfileID = profiles.first?.id
+        }
+        config = updated
+        return updated.activeProfileID
+    }
+
+    func saveCurrentLayout(profileID: String, candidateOrder: [String]) {
+        var updated = config
+        var profiles = updated.profileList
+        guard let index = profiles.firstIndex(where: { $0.id == profileID }) else { return }
+        profiles[index].appZones = Dictionary(uniqueKeysWithValues: candidateOrder.map {
+            ($0, updated.zone(forBundleID: $0))
+        })
+        profiles[index].spacerLength = updated.spacerRestingLengthPoints
+        updated.profiles = profiles
+        config = updated
     }
 
     // MARK: - Rules

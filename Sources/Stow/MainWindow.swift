@@ -13,14 +13,8 @@ import ServiceManagement
 /// the bar, checking its health, or configuring the app) rather than one window
 /// per concern.
 ///
-/// Three of the six destinations below front a subsystem this PLAN 0 stage does
-/// not build: dragging a tile between zones needs a persisted store and a spacer
-/// status item that PLAN A builds, and per-key hotkeys need a hotkey manager
-/// that PLAN A also builds. Those destinations still render their real surface
-/// (the measured bar, the four named profiles, the two worked-example rules),
-/// with a visible note that the engine behind them is not yet wired, rather
-/// than a blank pane or a silent stub. The Doctor destination is the one place
-/// in this file where every check is real today.
+/// Arrange and Profiles are live product surfaces backed by the same persisted store and
+/// transactional arranger. Rules remains an explicit preview until its context evaluator ships.
 struct MainWindow: View {
     /// Which destination to show. A `Binding` rather than local `@State`, matching
     /// AuthBar's `MainWindow` exactly: it lets a future caller (the sub-bar's gear,
@@ -38,6 +32,7 @@ struct MainWindow: View {
     @State private var selectedDisplayID: CGDirectDisplayID = CGMainDisplayID()
     @ObservedObject private var target = WindowTarget.shared
     @EnvironmentObject private var hider: HideController
+    @EnvironmentObject private var ruleEngine: RuleEngine
 
     /// The screen the header's display picker currently has selected. Falls back
     /// through `NSScreen.main` and the first available screen so a display that
@@ -59,8 +54,8 @@ struct MainWindow: View {
                 detail
             }
         }
-        .frame(minWidth: 760, idealWidth: 840, maxWidth: .infinity,
-               minHeight: 460, idealHeight: 560, maxHeight: .infinity)
+        .frame(minWidth: 780, idealWidth: 880, maxWidth: .infinity,
+               minHeight: 500, idealHeight: 600, maxHeight: .infinity)
         .background(StowTheme.canvas)
         .preferredColorScheme(.dark)
         .tint(StowTheme.stops(for: .tidy).first ?? StowTheme.blue)
@@ -79,7 +74,9 @@ struct MainWindow: View {
         .task(id: selectedDisplayID) {
             await doctor.run(screen: selectedScreen,
                              spacerWidth: hider.measuredSeamWidth(),
-                             seamWindows: hider.seamWindowNumbers())
+                             seamWindows: hider.seamWindowNumbers(),
+                             profileHotKeyCount: ProfileHotKeys.shared.registeredCount,
+                             automationRunning: ruleEngine.isRunning)
         }
     }
 
@@ -129,12 +126,7 @@ struct MainWindow: View {
             if NSScreen.screens.count > 1 {
                 AuroraMenu(options: displayOptions, selection: $selectedDisplayID)
             } else {
-                // A picker offering exactly one choice is not a choice; naming the
-                // single attached display plainly is more honest than a dead
-                // dropdown that always opens to one row.
-                Text(selectedScreen?.localizedName ?? "No display")
-                    .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(StowTheme.inkMuted)
+                healthChip
             }
         }
         .padding(.horizontal, 14)
@@ -145,17 +137,36 @@ struct MainWindow: View {
         NSScreen.screens.map { ($0.displayID, $0.localizedName, nil) }
     }
 
+    private var healthChip: some View {
+        let summary = doctor.summary
+        let healthy = summary.issueCount == 0
+        return HStack(spacing: 6) {
+            Circle()
+                .fill(healthy ? (StowTheme.stops(for: .tidy).first ?? StowTheme.blue)
+                              : StowTheme.orange)
+                .frame(width: 6, height: 6)
+                .shadow(color: healthy ? StowTheme.edgeGlow(for: .tidy) : .clear, radius: 3)
+            Text(healthy ? "Healthy" : "\(summary.issueCount) to review")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(healthy ? StowTheme.inkSoft : StowTheme.orange)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(Aurora.raised, in: Capsule())
+        .overlay(Capsule().strokeBorder(StowTheme.hairline))
+    }
+
     // MARK: - Sidebar
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            group("LAYOUT", Destination.layout)
+            group("ORGANIZE", Destination.layout)
             group("HEALTH", Destination.health)
-            group("APP", Destination.app)
+            group("STOW", Destination.app)
             Spacer(minLength: 12)
             utilities
         }
-        .frame(width: 186)
+        .frame(width: 174)
         .background(
             ZStack(alignment: .top) {
                 Color(red: 0.043, green: 0.051, blue: 0.067)
@@ -193,7 +204,7 @@ struct MainWindow: View {
             destination = dest
         } label: {
             HStack(spacing: 9) {
-                Text(dest.glyph)
+                Image(systemName: dest.symbol)
                     .font(.system(size: 12))
                     .frame(width: 15, height: 15)
                     .foregroundStyle(selected
@@ -250,8 +261,6 @@ struct MainWindow: View {
     /// noise a warning badge exists specifically to avoid.
     private func badge(for dest: Destination) -> (count: Int, urgent: Bool)? {
         switch dest {
-        case .profiles:
-            return (Config.defaultProfiles.count, false)
         case .doctor:
             let summary = doctor.summary
             return summary.issueCount > 0 ? (summary.issueCount, summary.hasWarning) : nil
@@ -266,7 +275,9 @@ struct MainWindow: View {
                 Task {
                     await doctor.run(screen: selectedScreen,
                                      spacerWidth: hider.measuredSeamWidth(),
-                                     seamWindows: hider.seamWindowNumbers())
+                                     seamWindows: hider.seamWindowNumbers(),
+                                     profileHotKeyCount: ProfileHotKeys.shared.registeredCount,
+                                     automationRunning: ruleEngine.isRunning)
                 }
             } label: {
                 Image(systemName: "arrow.clockwise")
@@ -366,8 +377,8 @@ extension MainWindow {
         var id: String { rawValue }
 
         static let layout: [Destination] = [.arrange, .profiles, .rules]
-        static let health: [Destination] = [.doctor, .whatsNew]
-        static let app: [Destination] = [.settings]
+        static let health: [Destination] = [.doctor]
+        static let app: [Destination] = [.whatsNew, .settings]
 
         var title: String {
             switch self {
@@ -380,16 +391,14 @@ extension MainWindow {
             }
         }
 
-        /// The mock's own glyphs, rendered as text rather than SF Symbols because
-        /// the design specifies these exact characters, not a systemName.
-        var glyph: String {
+        var symbol: String {
             switch self {
-            case .arrange:  return "◫"
-            case .profiles: return "▣"
-            case .rules:    return "⇄"
-            case .doctor:   return "⚗"
-            case .whatsNew: return "✨"
-            case .settings: return "⚙"
+            case .arrange:  return "rectangle.3.group"
+            case .profiles: return "square.stack.3d.up"
+            case .rules:    return "arrow.triangle.2.circlepath"
+            case .doctor:   return "stethoscope"
+            case .whatsNew: return "sparkles"
+            case .settings: return "gearshape"
             }
         }
     }
@@ -422,6 +431,7 @@ private struct ArrangeContentView: View {
     @State private var applyTask: Task<Void, Never>?
     /// Stow's seam window number, so it is excluded from occupancy arithmetic.
     @State private var seamWindows: Set<CGWindowID> = []
+    @State private var showSystemItems = false
 
 
     var body: some View {
@@ -431,7 +441,6 @@ private struct ArrangeContentView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
-                explanation
                 if scan == nil {
                     ProgressView().controlSize(.small).tint(StowTheme.blue)
                 } else {
@@ -451,6 +460,9 @@ private struct ArrangeContentView: View {
                 .foregroundStyle(StowTheme.ink)
             Text("Choose what stays visible and what waits in Stow.")
                 .font(.system(size: 11.5))
+                .foregroundStyle(StowTheme.inkSoft)
+            Text("Drag an app across the boundary. Changes save automatically.")
+                .font(.system(size: 10.5))
                 .foregroundStyle(StowTheme.inkMuted)
         }
     }
@@ -513,7 +525,7 @@ private struct ArrangeContentView: View {
                     },
                     zoneOf: { store.config.zone(forBundleID: $0) },
                     onMove: { bundle, zone in
-                        store.config.setZone(zone, forBundleID: bundle)
+                        store.setZone(zone, forBundleID: bundle)
                         // The zone is saved and drawn NOW; the seam move is coalesced. A board
                         // that needed a separate Apply press made the drag feel like it did
                         // nothing, and applying synchronously per drop froze it for seconds.
@@ -531,7 +543,7 @@ private struct ArrangeContentView: View {
                         $0.userMessage(displayName: Self.displayName(forBundleID:))
                     }.joined(separator: "\n"))
             }
-            applyRow()
+            controlRow()
             systemSummary()
         }
     }
@@ -658,29 +670,44 @@ private struct ArrangeContentView: View {
                 .stroke(StowTheme.orange.opacity(0.45), lineWidth: 1))
     }
 
-    /// Applies the zones, and offers the reveal.
-    ///
-    /// Apply plus the everyday open/close action.
-    private func applyRow() -> some View {
+    /// Changes apply from the board itself. This row reports that state and keeps only the
+    /// everyday show/hide action, avoiding a second Apply button that suggests the drag did not
+    /// already take effect.
+    private func controlRow() -> some View {
         let nothingHidden = !store.config.hidesAnything
-        return HStack(spacing: 10) {
-            Button(nothingHidden ? "Show everything" : "Apply") {
-                apply()
-            }
-            .disabled(movingCut)
-
-            Button(hider.presentation == .revealed ? "Close Stow" : "Open Stow") {
-                hider.toggle()
-                Task { @MainActor in await rescan() }
-            }
-            .disabled(movingCut || nothingHidden)
-            .help("Temporarily returns apps in Stow to the menu bar")
-
+        let hiddenCount = candidateApps().filter {
+            store.config.zone(forBundleID: $0.plan.bundleID) == .tucked
+        }.count
+        return HStack(spacing: 9) {
             if movingCut {
                 ProgressView().controlSize(.small).tint(StowTheme.blue)
+                Text("Updating the menu bar…")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(StowTheme.inkSoft)
+            } else {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(StowTheme.stops(for: .tidy).first ?? StowTheme.blue)
+                Text(nothingHidden
+                     ? "Drag an app into In Stow to begin."
+                     : "Arrangement saved automatically")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(StowTheme.inkSoft)
+            }
+            Spacer(minLength: 8)
+            if !nothingHidden {
+                Button(hider.presentation == .tidy
+                       ? "Show \(hiddenCount) App\(hiddenCount == 1 ? "" : "s")"
+                       : "Hide Again") {
+                    hider.toggle()
+                    Task { @MainActor in await rescan() }
+                }
+                .buttonStyle(.bordered)
+                .disabled(movingCut)
+                .help("Temporarily show or hide the apps assigned to In Stow")
             }
         }
-        .padding(.top, 4)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 4)
     }
 
     /// Apple's own items, collapsed to ONE line.
@@ -707,22 +734,28 @@ private struct ArrangeContentView: View {
 
         return Group {
             if !system.isEmpty {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("\(system.count) system items")
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(StowTheme.inkSoft)
-                    Text("Stow cannot offer these one at a time. macOS reports all of them as"
-                         + " Control Center, and Stow arranges by app, so they would only ever"
-                         + " move together.")
-                        .font(.system(size: 10))
-                        .foregroundStyle(StowTheme.inkMuted)
-                        .fixedSize(horizontal: false, vertical: true)
+                DisclosureGroup(isExpanded: $showSystemItems) {
                     Text(system.map(\.name).joined(separator: " · "))
-                        .font(.system(size: 10))
+                        .font(.system(size: 10.5))
                         .foregroundStyle(StowTheme.inkMuted)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 6)
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: "apple.logo")
+                            .foregroundStyle(StowTheme.inkMuted)
+                        Text("System items stay visible")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(StowTheme.inkSoft)
+                        Text("\(system.count)")
+                            .font(.system(size: 9.5, design: .monospaced))
+                            .foregroundStyle(StowTheme.inkMuted)
+                    }
                 }
-                .padding(.top, 10)
+                .tint(StowTheme.inkMuted)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Aurora.inset, in: RoundedRectangle(cornerRadius: 9))
+                .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(StowTheme.hairline))
             }
         }
     }
@@ -866,6 +899,11 @@ private struct ArrangeContentView: View {
 /// from it), so it is gone; every row below reads `store.profiles` directly.
 private struct ProfilesContentView: View {
     @EnvironmentObject var store: Store
+    @EnvironmentObject var hider: HideController
+    @EnvironmentObject var ruleEngine: RuleEngine
+    @State private var applyingProfileID: String?
+    @State private var registeredShortcutCount = 0
+    @State private var draftName = ""
 
     /// The id `AuroraMenu`'s selection binds to. `Config.Profile` is only
     /// `Equatable`, not `Hashable`, and `id` is also the exact field
@@ -876,76 +914,267 @@ private struct ProfilesContentView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Profiles")
-                .font(.system(size: 19, weight: .bold, design: .rounded))
-                .foregroundStyle(StowTheme.ink)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                PaneHeader(title: "Profiles",
+                           subtitle: "Switch the whole menu bar instantly or use Command-Shift-1…4.")
 
-            NotYetWiredBanner(text: "Applying a profile does not move anything"
-                + " between zones yet: that needs a reveal engine that does not exist."
-                + " The menu below is real and persists through the Store, so your"
-                + " selection survives closing this window; it simply has nothing"
-                + " downstream to act on yet.")
+                CapabilityNote(
+                    symbol: "bolt.fill",
+                    label: "LIVE",
+                    title: "Profile switching controls the real menu bar",
+                    detail: "\(registeredShortcutCount) global shortcuts registered. Changes made"
+                        + " in Arrange are saved to the active profile.")
 
-            AuroraMenu(
-                options: store.profiles.map { ($0.id, $0.name, $0.hotkeyDisplay) },
-                selection: Binding(
-                    get: { selectedID },
-                    set: { newID in
-                        guard let profile = store.profiles.first(where: { $0.id == newID })
-                        else { return }
-                        store.apply(profile)
+                editorControls
+
+                VStack(spacing: 8) {
+                    ForEach(store.profiles) { profile in
+                        profileButton(profile)
                     }
-                ))
-
-            VStack(spacing: 6) {
-                ForEach(store.profiles) { profile in
-                    HStack {
-                        Text(profile.name)
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(profile.id == selectedID
-                                             ? StowTheme.ink : StowTheme.inkSoft)
-                        Spacer()
-                        Text(profile.hotkeyDisplay)
-                            .font(.system(size: 10.5, design: .monospaced))
-                            .foregroundStyle(StowTheme.inkMuted)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(profile.id == selectedID ? StowTheme.card : Color.clear,
-                                in: RoundedRectangle(cornerRadius: 8))
                 }
             }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(20)
+        .onAppear {
+            store.ensureProfileLayouts(candidateOrder: candidateOrder)
+            registeredShortcutCount = ProfileHotKeys.shared.registeredCount
+            draftName = activeProfile?.name ?? ""
+        }
+        .onChange(of: selectedID) { _, _ in
+            draftName = activeProfile?.name ?? ""
+        }
+    }
+
+    private var candidateOrder: [String] {
+        hider.currentCandidates().map(\.bundleID)
+    }
+
+    private var activeProfile: Config.Profile? {
+        store.profiles.first { $0.id == selectedID }
+    }
+
+    private var editorControls: some View {
+        HStack(spacing: 8) {
+            TextField("Profile name", text: $draftName)
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .frame(maxWidth: 240)
+                .background(Aurora.inset, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(StowTheme.hairline))
+                .onSubmit { renameActive() }
+            Button("Rename") { renameActive() }
+                .buttonStyle(.bordered)
+                .disabled(activeProfile == nil || draftName.trimmingCharacters(
+                    in: .whitespacesAndNewlines).isEmpty)
+            Button("Save Current", systemImage: "square.and.arrow.down") {
+                guard let activeProfile else { return }
+                store.saveCurrentLayout(profileID: activeProfile.id,
+                                        candidateOrder: candidateOrder)
+            }
+            .buttonStyle(.bordered)
+            Spacer(minLength: 8)
+            Menu {
+                Button("New Profile", systemImage: "plus") { createProfile() }
+                Button("Duplicate Active", systemImage: "plus.square.on.square") {
+                    duplicateActive()
+                }
+                if let activeProfile,
+                   !Store.builtInProfileIDs.contains(activeProfile.id) {
+                    Divider()
+                    Button("Delete Active", systemImage: "trash", role: .destructive) {
+                        deleteActive()
+                    }
+                }
+            } label: {
+                Label("Profile Actions", systemImage: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+        }
+    }
+
+    private func profileButton(_ profile: Config.Profile) -> some View {
+        let active = profile.id == selectedID
+        return Button {
+            apply(profile)
+        } label: {
+            HStack(spacing: 12) {
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(active
+                          ? AnyShapeStyle(StowTheme.diagonal(for: .tidy).opacity(0.22))
+                          : AnyShapeStyle(Aurora.inset))
+                    .frame(width: 36, height: 36)
+                    .overlay {
+                        if applyingProfileID == profile.id {
+                            ProgressView().controlSize(.small).tint(StowTheme.blue)
+                        } else {
+                            Image(systemName: profileSymbol(profile))
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(active
+                                                 ? (StowTheme.stops(for: .tidy).first
+                                                    ?? StowTheme.blue)
+                                                 : StowTheme.inkSoft)
+                        }
+                    }
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 7) {
+                        Text(profile.name)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(StowTheme.ink)
+                        if active {
+                            Text("ACTIVE")
+                                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                                .kerning(0.8)
+                                .foregroundStyle(StowTheme.stops(for: .tidy).first
+                                                 ?? StowTheme.blue)
+                        }
+                    }
+                    Text(profileDetail(profile))
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(StowTheme.inkMuted)
+                }
+                Spacer(minLength: 8)
+                Text(profile.hotkeyDisplay.isEmpty ? "CUSTOM" : profile.hotkeyDisplay)
+                    .font(.system(size: profile.hotkeyDisplay.isEmpty ? 8.5 : 10.5,
+                                  weight: .semibold, design: .monospaced))
+                    .kerning(profile.hotkeyDisplay.isEmpty ? 0.7 : 0)
+                    .foregroundStyle(StowTheme.inkSoft)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Aurora.inset, in: RoundedRectangle(cornerRadius: 7))
+                    .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(StowTheme.hairline))
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(active ? StowTheme.cardHover : StowTheme.card,
+                        in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(active
+                              ? (StowTheme.stops(for: .tidy).first ?? StowTheme.blue).opacity(0.38)
+                              : StowTheme.hairline))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(applyingProfileID != nil)
+        .accessibilityLabel("Apply \(profile.name) profile")
+        .accessibilityValue(active ? "Active" : profileDetail(profile))
+    }
+
+    private func apply(_ profile: Config.Profile) {
+        applyingProfileID = profile.id
+        ruleEngine.noteManualSelection()
+        Task { @MainActor in
+            await Task.yield()
+            let previous = store.config
+            let previousUndo = store.undoProfileID
+            let updated = store.apply(profile, candidateOrder: candidateOrder)
+            let outcome = hider.arrangeByMovingItems(from: updated)
+            if !outcome.isClean {
+                store.restoreProfileState(config: previous, undoProfileID: previousUndo)
+            }
+            applyingProfileID = nil
+        }
+    }
+
+    private func profileDetail(_ profile: Config.Profile) -> String {
+        let hidden = profile.appZones?.values.filter { $0 == .tucked }.count ?? 0
+        if hidden == 0 { return "Everything visible" }
+        return "\(hidden) app\(hidden == 1 ? "" : "s") in Stow"
+    }
+
+    private func profileSymbol(_ profile: Config.Profile) -> String {
+        switch profile.id {
+        case "presenting": return "house.fill"
+        case "screen-share": return "rectangle.inset.filled.and.person.filled"
+        case "focus": return "scope"
+        case "everything": return "eye.fill"
+        default: return "square.stack.3d.up.fill"
+        }
+    }
+
+    private func renameActive() {
+        guard let activeProfile else { return }
+        store.renameProfile(id: activeProfile.id, name: draftName)
+    }
+
+    private func createProfile() {
+        ruleEngine.noteManualSelection()
+        let profile = store.createProfile(name: "New Profile", candidateOrder: candidateOrder)
+        draftName = profile.name
+    }
+
+    private func duplicateActive() {
+        guard let activeProfile else { return }
+        ruleEngine.noteManualSelection()
+        if let copy = store.duplicateProfile(id: activeProfile.id) {
+            draftName = copy.name
+        }
+    }
+
+    private func deleteActive() {
+        guard let activeProfile else { return }
+        ruleEngine.noteManualSelection()
+        let nextID = store.deleteProfile(id: activeProfile.id)
+        guard let nextID,
+              let next = store.profiles.first(where: { $0.id == nextID }) else { return }
+        draftName = next.name
+        apply(next)
     }
 }
 
 // MARK: - Rules
 
-/// Design section 10's shape for a rule, driven by `Store` rather than the two
-/// hardcoded example cards this pane used to show. There is still no rules
-/// engine to author or evaluate a condition against, so this pane stays
-/// read-only, but what it lists is now exactly what `Config.rules` persists,
-/// not illustrative text that never matched what was actually saved.
+/// Live frontmost-application rules backed by `RuleEngine` and persisted in `Store`.
 private struct RulesContentView: View {
     @EnvironmentObject var store: Store
+    @EnvironmentObject var ruleEngine: RuleEngine
+    @State private var selectedBundleID = ""
+    @State private var selectedProfileID = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Rules")
-                .font(.system(size: 19, weight: .bold, design: .rounded))
-                .foregroundStyle(StowTheme.ink)
+        VStack(alignment: .leading, spacing: 18) {
+            PaneHeader(title: "Rules",
+                       subtitle: "Let context choose the right menu-bar layout for you.")
 
-            NotYetWiredBanner(text: "There is no rules engine yet: nothing below"
-                + " actually watches screen sharing or the frontmost app. This list is"
-                + " read-only and shows exactly what the Store has persisted, which is"
-                + " the shape a rule will take once one can be authored and evaluated.")
+            CapabilityNote(symbol: "wand.and.stars",
+                           label: ruleEngine.activeRuleID == nil ? "LIVE" : "ACTIVE",
+                           title: "Frontmost-app automation is running",
+                           detail: ruleEngine.lastStatus)
+
+            HStack(spacing: 9) {
+                AuroraMenu(options: appOptions,
+                           selection: $selectedBundleID,
+                           placeholder: "Choose app")
+                Image(systemName: "arrow.right")
+                    .foregroundStyle(StowTheme.inkMuted)
+                AuroraMenu(options: profileOptions,
+                           selection: $selectedProfileID,
+                           placeholder: "Choose profile")
+                Spacer(minLength: 8)
+                Button("Add Rule", systemImage: "plus") { addRule() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(selectedBundleID.isEmpty || selectedProfileID.isEmpty)
+            }
 
             if store.rules.isEmpty {
-                Text("No rules saved yet.")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(StowTheme.inkMuted)
+                VStack(spacing: 8) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 22))
+                        .foregroundStyle(StowTheme.inkMuted)
+                    Text("No rules yet")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(StowTheme.ink)
+                    Text("Choose a running app and the profile Stow should apply.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(StowTheme.inkMuted)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 34)
+                .background(StowTheme.card, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(StowTheme.hairline))
             } else {
                 VStack(spacing: 8) {
                     ForEach(store.rules) { rule in
@@ -954,28 +1183,43 @@ private struct RulesContentView: View {
                 }
             }
         }
-        .padding(20)
+        .padding(24)
+        .onAppear {
+            if selectedBundleID.isEmpty { selectedBundleID = appOptions.first?.value ?? "" }
+            if selectedProfileID.isEmpty {
+                selectedProfileID = store.activeProfile?.id ?? store.profiles.first?.id ?? ""
+            }
+        }
     }
 
     private func ruleCard(_ rule: Config.Rule) -> some View {
-        HStack(spacing: 10) {
-            Text(describe(rule.condition))
-                .font(.system(size: 12))
-                .foregroundStyle(rule.isEnabled ? StowTheme.ink : StowTheme.inkMuted)
-            Image(systemName: "arrow.right")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(StowTheme.inkMuted)
-            Text(describe(rule.action))
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(rule.isEnabled
-                                 ? AnyShapeStyle(StowTheme.sweep(for: .tidy))
-                                 : AnyShapeStyle(StowTheme.inkMuted))
-            if !rule.isEnabled {
-                Spacer(minLength: 0)
-                Text("disabled")
-                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                    .foregroundStyle(StowTheme.inkMuted)
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(ruleEngine.activeRuleID == rule.id
+                      ? StowTheme.blue.opacity(0.16) : Aurora.inset)
+                .frame(width: 34, height: 34)
+                .overlay(Image(systemName: "app.badge.checkmark")
+                    .foregroundStyle(ruleEngine.activeRuleID == rule.id
+                                     ? StowTheme.blue : StowTheme.inkSoft))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(describe(rule.condition))
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(rule.isEnabled ? StowTheme.ink : StowTheme.inkMuted)
+                Text(describe(rule.action))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(StowTheme.inkSoft)
             }
+            Spacer(minLength: 8)
+            Toggle("Enabled", isOn: Binding(
+                get: { rule.isEnabled },
+                set: { store.setRule(id: rule.id, isEnabled: $0) }
+            ))
+            .labelsHidden()
+            .toggleStyle(AuroraToggleStyle())
+            Button("Delete", systemImage: "trash") { store.removeRule(id: rule.id) }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
+                .foregroundStyle(StowTheme.inkMuted)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -988,16 +1232,57 @@ private struct RulesContentView: View {
         switch condition {
         case .screenSharingStarted: return "Screen sharing starts"
         case .screenSharingEnded: return "Screen sharing ends"
-        case .frontmostAppIs(let bundleID): return "\(bundleID) is frontmost"
+        case .frontmostAppIs(let bundleID): return "When \(displayName(bundleID)) is frontmost"
         }
     }
 
     private func describe(_ action: Config.Rule.Action) -> String {
         switch action {
-        case .applyProfile(let id): return "Apply profile \"\(id)\""
+        case .applyProfile(let id):
+            let name = store.profiles.first(where: { $0.id == id })?.name ?? id
+            return "Apply \(name), then restore the previous profile on exit"
         case .revealTuckedSlot(let depth): return "Reveal tucked slot \(depth)"
         case .tuckPinnedSlot(let depth): return "Tuck pinned slot \(depth)"
         }
+    }
+
+    private var appOptions: [(value: String, label: String, shortcut: String?)] {
+        var seen = Set<String>()
+        return NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular }
+            .compactMap { app -> (value: String, label: String, shortcut: String?)? in
+                guard let bundleID = app.bundleIdentifier,
+                      bundleID != Bundle.main.bundleIdentifier,
+                      seen.insert(bundleID).inserted else { return nil }
+                return (bundleID, app.localizedName ?? bundleID, nil)
+            }
+            .sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
+    }
+
+    private var profileOptions: [(value: String, label: String, shortcut: String?)] {
+        store.profiles.map { ($0.id, $0.name, $0.hotkeyDisplay) }
+    }
+
+    private func addRule() {
+        for existing in store.rules {
+            if case .frontmostAppIs(let bundleID) = existing.condition,
+               bundleID == selectedBundleID {
+                store.removeRule(id: existing.id)
+            }
+        }
+        store.addRule(.init(
+            id: "frontmost:\(selectedBundleID)",
+            isEnabled: true,
+            condition: .frontmostAppIs(bundleID: selectedBundleID),
+            action: .applyProfile(id: selectedProfileID)))
+    }
+
+    private func displayName(_ bundleID: String) -> String {
+        NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .first?.localizedName
+            ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+                .map { FileManager.default.displayName(atPath: $0.path) }
+            ?? bundleID
     }
 }
 
@@ -1025,45 +1310,59 @@ private struct SettingsContentView: View {
     @State private var loginError: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            Text("Settings")
-                .font(.system(size: 19, weight: .bold, design: .rounded))
-                .foregroundStyle(StowTheme.ink)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                PaneHeader(title: "Settings",
+                           subtitle: "Tune the parts of Stow that are active today.")
 
-            settingsSection("HOTKEYS") {
-                NotYetWiredBanner(text: "Hotkey registration needs a hotkey manager,"
-                    + " which is PLAN A and does not exist yet. Nothing here can be"
-                    + " bound to a key until it lands.")
-            }
-
-            settingsSection("BEHAVIOR") {
-                Toggle("Reveal on hover", isOn: Binding(
-                    get: { store.revealOnHoverEnabled },
-                    set: { store.config.revealOnHover = $0 }
-                ))
-                    .toggleStyle(AuroraToggleStyle())
+                settingsSection("HIDDEN APP MENUS") {
                 HStack {
-                    Text("Auto-tuck delay")
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(StowTheme.ink)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Return to Stow after")
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(StowTheme.ink)
+                        Text("How long a temporarily opened app remains visible.")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(StowTheme.inkMuted)
+                    }
                     Spacer()
                     AuroraStepper(value: Binding(
-                        get: { store.autoTuckDelay },
-                        set: { store.config.autoTuckDelaySeconds = $0 }
-                    ), range: 1...15, step: 1,
+                        get: { store.config.revealDuration },
+                        set: { store.config.revealDurationSeconds = $0 }
+                    ), range: 5...60, step: 5,
                        format: { "\(Int($0))s" },
-                       accessibilityName: "Auto-tuck delay")
+                       accessibilityName: "Return to Stow delay")
                 }
-                Text("Both settings above now persist through the Store and survive"
-                     + " closing this window. Reveal on hover still does nothing on"
-                     + " the bar itself: there is no reveal engine to read it back yet,"
-                     + " so it holds your choice and waits.")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(StowTheme.inkMuted)
             }
 
-            settingsSection("LOGIN") {
-                Toggle("Launch at login", isOn: Binding(
+            settingsSection("RECOVERY") {
+                HStack(spacing: 12) {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(StowTheme.diagonal(for: .tidy).opacity(0.18))
+                        .frame(width: 34, height: 34)
+                        .overlay(Image(systemName: "eye.fill")
+                            .foregroundStyle(StowTheme.stops(for: .tidy).first ?? StowTheme.blue))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Show everything")
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(StowTheme.ink)
+                        Text("Immediately returns every hidden app to the menu bar.")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(StowTheme.inkMuted)
+                    }
+                    Spacer()
+                    Text("⌘⇧Esc")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(StowTheme.ink)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(Aurora.inset, in: RoundedRectangle(cornerRadius: 7))
+                        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(StowTheme.hairline))
+                }
+            }
+
+            settingsSection("GENERAL") {
+                Toggle("Launch Stow at login", isOn: Binding(
                     get: { launchAtLoginActual },
                     set: { newValue in
                         loginError = nil
@@ -1073,18 +1372,7 @@ private struct SettingsContentView: View {
                             } else {
                                 try SMAppService.mainApp.unregister()
                             }
-                            // Only commit the new value once macOS has actually
-                            // accepted the request. Setting it optimistically and
-                            // reverting on failure inside the same setter would
-                            // fire this Binding's setter a second time, which is
-                            // both unnecessary and the shape of the exact
-                            // re-entrancy bug this avoids by never assigning
-                            // twice.
                             launchAtLoginActual = newValue
-                            // The user's INTENT, recorded alongside the live status
-                            // above rather than instead of it, so a future reader
-                            // can tell "what was last requested" from "what macOS
-                            // is doing right now" without conflating the two.
                             store.config.launchAtLogin = newValue
                         } catch {
                             loginError = "Could not \(newValue ? "enable" : "disable"):"
@@ -1092,6 +1380,8 @@ private struct SettingsContentView: View {
                         }
                     }
                 ))
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(StowTheme.ink)
                 .toggleStyle(AuroraToggleStyle())
                 if let loginError {
                     Text(loginError)
@@ -1099,8 +1389,29 @@ private struct SettingsContentView: View {
                         .foregroundStyle(StowTheme.orange)
                 }
             }
+
+            settingsSection("ABOUT") {
+                HStack {
+                    Image(nsImage: StowGlyph.image(for: .tidy, size: NSSize(width: 28, height: 28),
+                                                   glow: false))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Stow \(StowVersion.current)")
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(StowTheme.ink)
+                        Text(StowVersion.builderAttribution)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(StowTheme.inkMuted)
+                    }
+                    Spacer()
+                    Text(StowVersion.buildCommit.prefix(7))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(StowTheme.inkMuted)
+                }
+            }
         }
-        .padding(20)
+        .padding(24)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func settingsSection(_ title: String, @ViewBuilder content: () -> some View) -> some View {
@@ -1112,12 +1423,68 @@ private struct SettingsContentView: View {
                     .kerning(1.2)
                 Rectangle().fill(StowTheme.hairline).frame(height: 1)
             }
-            content()
+            VStack(alignment: .leading, spacing: 12) { content() }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(StowTheme.card, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(StowTheme.hairline))
         }
     }
 }
 
 // MARK: - Shared
+
+private struct PaneHeader: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundStyle(StowTheme.ink)
+            Text(subtitle)
+                .font(.system(size: 11.5))
+                .foregroundStyle(StowTheme.inkSoft)
+        }
+    }
+}
+
+private struct CapabilityNote: View {
+    let symbol: String
+    let label: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 11) {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(StowTheme.blue.opacity(0.10))
+                .frame(width: 32, height: 32)
+                .overlay(Image(systemName: symbol)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(StowTheme.blue))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(label)
+                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .kerning(1.1)
+                    .foregroundStyle(StowTheme.blue)
+                Text(title)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(StowTheme.ink)
+                Text(detail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(StowTheme.inkSoft)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(13)
+        .background(StowTheme.blue.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12)
+            .strokeBorder(StowTheme.blue.opacity(0.18)))
+    }
+}
 
 /// A visible, honest note that the engine behind a rendered surface is not yet
 /// wired. Used across Arrange, Profiles, Rules and Settings rather than a silent

@@ -413,24 +413,136 @@ import CoreGraphics
     let profiles = Config.default.profileList
     #expect(profiles.count == 4)
     let names = Set(profiles.map(\.name))
-    #expect(names == ["Presenting", "Screen Share", "Focus", "Everything"])
+    #expect(names == ["Default", "Screen Share", "Focus", "Everything"])
     let ids = Set(profiles.map(\.id))
     #expect(ids.count == 4, "every profile must have a distinct id")
 }
 
 // MARK: - Store
 //
-// Store's own responsibility, per the batch contract, is persisting Config
-// and never keying anything to app identity. What is testable without a real
-// window server or a real save round trip through the debounce is the
-// profile-activation contract: it records a choice and nothing more.
+@Test func legacyProfilesSeedProgressivelyFromTheCurrentArrangement() {
+    let order = ["a", "b", "c", "d"]
+    let base = Dictionary(uniqueKeysWithValues: order.map { ($0, Zone.tucked) })
+    let profiles = Store.seededProfiles(
+        profiles: Config.defaultProfiles,
+        baseZones: base,
+        candidateOrder: order)
 
-@Test @MainActor func applyingAProfileRecordsItAsActiveWithoutMovingAnything() {
+    #expect(profiles.map { $0.appZones?.values.filter { $0 == .tucked }.count } == [4, 3, 1, 0])
+    #expect(profiles[0].appZones == base)
+    #expect(profiles[0].name == "Default")
+}
+
+@Test @MainActor func untouchedLegacyPresentingProfileMigratesToDefaultName() {
+    var fixture = Config.default
+    fixture.profiles?[0].name = "Presenting"
+    let store = Store(fixtureConfig: fixture)
+
+    store.ensureProfileLayouts(candidateOrder: ["a"])
+
+    #expect(store.profiles.first?.id == "presenting")
+    #expect(store.profiles.first?.name == "Default")
+}
+
+@Test @MainActor func applyingAProfileChangesTheRealZoneConfiguration() {
+    var fixture = Config.default
+    fixture.zoneByBundleID = ["a": .tucked, "b": .tucked, "c": .tucked]
+    let store = Store(fixtureConfig: fixture)
+    let order = ["a", "b", "c"]
+    store.ensureProfileLayouts(candidateOrder: order)
+    let everything = try! #require(store.profiles.first { $0.id == "everything" })
+
+    let applied = store.apply(everything, candidateOrder: order)
+
+    #expect(applied.activeProfileID == "everything")
+    #expect(order.allSatisfy { applied.zone(forBundleID: $0) == .pinned })
+    #expect(applied.spacerRestingLength == everything.spacerLength)
+}
+
+@Test @MainActor func arrangingAnAppUpdatesOnlyTheActiveProfile() throws {
+    var fixture = Config.default
+    fixture.zoneByBundleID = ["a": .tucked, "b": .tucked]
+    let store = Store(fixtureConfig: fixture)
+    store.ensureProfileLayouts(candidateOrder: ["a", "b"])
+    let screenShareBefore = try #require(store.profiles.first { $0.id == "screen-share" })
+
+    store.setZone(.pinned, forBundleID: "a")
+
+    let presenting = try #require(store.profiles.first { $0.id == "presenting" })
+    let screenShareAfter = try #require(store.profiles.first { $0.id == "screen-share" })
+    #expect(presenting.appZones?["a"] == .pinned)
+    #expect(screenShareAfter == screenShareBefore)
+}
+
+@Test func profileHotKeysExposeExactlyFourDistinctNumberKeys() {
+    let keys = (0..<4).compactMap { ProfileHotKeys.keyCode(at: $0) }
+    #expect(keys.count == 4)
+    #expect(Set(keys).count == 4)
+    #expect(ProfileHotKeys.keyCode(at: 4) == nil)
+}
+
+@Test @MainActor func newProfileCapturesCurrentLayoutAndBecomesActive() {
+    var fixture = Config.default
+    fixture.zoneByBundleID = ["a": .pinned, "b": .tucked]
+    let store = Store(fixtureConfig: fixture)
+
+    let created = store.createProfile(name: "Travel", candidateOrder: ["a", "b"])
+
+    #expect(created.name == "Travel")
+    #expect(created.hotkeyDisplay.isEmpty)
+    #expect(created.appZones == ["a": .pinned, "b": .tucked])
+    #expect(store.activeProfile?.id == created.id)
+}
+
+@Test @MainActor func renameDuplicateAndDeletePreserveBuiltInProfiles() throws {
     let store = Store(fixtureConfig: .default)
-    let target = Config.defaultProfiles[2]   // "Focus"
-    store.apply(target)
-    #expect(store.config.activeProfileID == target.id)
-    #expect(store.activeProfile?.id == target.id)
+    store.ensureProfileLayouts(candidateOrder: ["a"])
+    let presenting = try #require(store.profiles.first { $0.id == "presenting" })
+    let copy = try #require(store.duplicateProfile(id: presenting.id))
+
+    store.renameProfile(id: copy.id, name: "  Client Demo  ")
+    #expect(store.activeProfile?.name == "Client Demo")
+    #expect(store.activeProfile?.hotkeyDisplay == "")
+    #expect(store.deleteProfile(id: "presenting") != nil)
+    #expect(store.profiles.contains { $0.id == "presenting" })
+
+    _ = store.deleteProfile(id: copy.id)
+    #expect(!store.profiles.contains { $0.id == copy.id })
+    #expect(store.activeProfile?.id == "presenting")
+}
+
+@Test @MainActor func saveCurrentLayoutUpdatesOnlyTheSelectedProfile() throws {
+    var fixture = Config.default
+    fixture.zoneByBundleID = ["a": .tucked]
+    let store = Store(fixtureConfig: fixture)
+    store.ensureProfileLayouts(candidateOrder: ["a"])
+    let focusBefore = try #require(store.profiles.first { $0.id == "focus" })
+
+    store.config.setZone(.pinned, forBundleID: "a")
+    store.saveCurrentLayout(profileID: "presenting", candidateOrder: ["a"])
+
+    let presenting = try #require(store.profiles.first { $0.id == "presenting" })
+    let focusAfter = try #require(store.profiles.first { $0.id == "focus" })
+    #expect(presenting.appZones?["a"] == .pinned)
+    #expect(focusAfter == focusBefore)
+}
+
+@Test @MainActor func undoReturnsToThePreviousProfileExactlyOnce() throws {
+    var fixture = Config.default
+    fixture.zoneByBundleID = ["a": .tucked, "b": .tucked]
+    let store = Store(fixtureConfig: fixture)
+    store.ensureProfileLayouts(candidateOrder: ["a", "b"])
+    let everything = try #require(store.profiles.first { $0.id == "everything" })
+
+    _ = store.apply(everything, candidateOrder: ["a", "b"])
+    #expect(store.undoProfileID == "presenting")
+    #expect(store.config.zone(forBundleID: "a") == .pinned)
+
+    let undone = try #require(store.undoProfile(candidateOrder: ["a", "b"]))
+    #expect(undone.activeProfileID == "presenting")
+    #expect(undone.zone(forBundleID: "a") == .tucked)
+    #expect(store.undoProfileID == nil)
+    #expect(store.undoProfile(candidateOrder: ["a", "b"]) == nil)
 }
 
 @Test @MainActor func addingAndRemovingARuleUpdatesTheExposedList() {

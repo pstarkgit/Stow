@@ -20,6 +20,7 @@ struct StowApp: App {
     /// measured width in the WINDOW scene while the panel drives it from the MENU BAR
     /// scene, and both must see the same seam.
     @StateObject private var hider = HideController()
+    @StateObject private var ruleEngine = RuleEngine()
     /// Owns the temporary reveal-then-retuck for one tucked item at a time, driven by
     /// `onOpenHidden` below.
     ///
@@ -169,7 +170,20 @@ struct StowApp: App {
                     case .available, .restartRequired: return true
                     default: return false
                     }
-                }())
+                }(),
+                profiles: store.profiles,
+                activeProfileID: store.activeProfile?.id,
+                canUndoProfile: store.undoProfileID != nil,
+                onApplyProfile: { profileID in
+                    guard let profile = store.profiles.first(where: { $0.id == profileID })
+                    else { return }
+                    ruleEngine.noteManualSelection()
+                    _ = activateProfile(profile)
+                },
+                onUndoProfile: {
+                    ruleEngine.noteManualSelection()
+                    undoProfile()
+                })
                 .environmentObject(updater)
                 .environmentObject(store)
                 // Re-measure every time the panel opens: the window server and the
@@ -198,6 +212,15 @@ struct StowApp: App {
                         remeasure()
                     }
                     store.pruneUnavailableApps()
+                    let candidateOrder = hider.currentCandidates().map(\.bundleID)
+                    store.ensureProfileLayouts(candidateOrder: candidateOrder)
+                    ProfileHotKeys.shared.register(profiles: store.profiles) { profile in
+                        ruleEngine.noteManualSelection()
+                        _ = activateProfile(profile)
+                    }
+                    if let activeProfile = store.activeProfile {
+                        _ = store.apply(activeProfile, candidateOrder: candidateOrder)
+                    }
                     // Create the seam at LAUNCH, not on first panel open.
                     //
                     // Its placement is read from a preference at creation time, so
@@ -221,6 +244,14 @@ struct StowApp: App {
                     // the user never selected.
                     hider.arrangeByMovingItems(from: store.config)
                     remeasure()
+                    ruleEngine.start(
+                        rules: { store.rules },
+                        activeProfileID: { store.activeProfile?.id },
+                        applyProfile: { profileID in
+                            guard let profile = store.profiles.first(where: { $0.id == profileID })
+                            else { return false }
+                            return activateProfile(profile)
+                        })
 
                     // Quiet check at launch, then every six hours, matching
                     // AuthBar. On the label so it starts without waiting for the
@@ -281,6 +312,7 @@ struct StowApp: App {
                 // would each own a seam and contend over the bar's layout, which is
                 // the exact failure mode two competing managers produce.
                 .environmentObject(hider)
+                .environmentObject(ruleEngine)
         }
         .windowResizability(.contentMinSize)
         .defaultPosition(.center)
@@ -300,6 +332,33 @@ struct StowApp: App {
     private func remeasure() {
         snapshot.seamWindows = hider.seamWindowNumbers()
         snapshot.refresh()
+    }
+
+    /// Applies a profile from either the Profiles screen or its global shortcut.
+    @discardableResult
+    private func activateProfile(_ profile: Config.Profile) -> Bool {
+        let candidateOrder = hider.currentCandidates().map(\.bundleID)
+        let previous = store.config
+        let previousUndo = store.undoProfileID
+        let profileConfig = store.apply(profile, candidateOrder: candidateOrder)
+        let outcome = hider.arrangeByMovingItems(from: profileConfig)
+        if !outcome.isClean {
+            store.restoreProfileState(config: previous, undoProfileID: previousUndo)
+        }
+        remeasure()
+        return outcome.isClean
+    }
+
+    private func undoProfile() {
+        let candidateOrder = hider.currentCandidates().map(\.bundleID)
+        let previous = store.config
+        let previousUndo = store.undoProfileID
+        guard let undoConfig = store.undoProfile(candidateOrder: candidateOrder) else { return }
+        let outcome = hider.arrangeByMovingItems(from: undoConfig)
+        if !outcome.isClean {
+            store.restoreProfileState(config: previous, undoProfileID: previousUndo)
+        }
+        remeasure()
     }
 
     /// Opens the window on a specific destination, and brings it to the FRONT.
