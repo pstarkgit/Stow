@@ -333,4 +333,24 @@ final class Store: ObservableObject {
         current[index].isEnabled = isEnabled
         config.rules = current
     }
+
+    func moveRule(id: String, by offset: Int) {
+        guard offset != 0 else { return }
+        var current = config.ruleList
+        guard let from = current.firstIndex(where: { $0.id == id }) else { return }
+        let to = min(max(0, from + offset), current.count - 1)
+        guard to != from else { return }
+        let rule = current.remove(at: from)
+        current.insert(rule, at: to)
+        config.rules = current
+    }
+
+    nonisolated static func conflictingRuleIDs(in rules: [Config.Rule]) -> Set<String> {
+        var idsByBundle: [String: [String]] = [:]
+        for rule in rules where rule.isEnabled {
+            guard case .frontmostAppIs(let bundleID) = rule.condition else { continue }
+            idsByBundle[bundleID, default: []].append(rule.id)
+        }
+        return Set(idsByBundle.values.filter { $0.count > 1 }.flatMap { $0 })
+    }
 }

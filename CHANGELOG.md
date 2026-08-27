@@ -13,6 +13,15 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.30
+
+- Rules now explain why a profile is active and keep a bounded activity history of
+  automatic applies, restores, failures, manual overrides, and cooldowns.
+- Rule order is explicit priority, duplicate application triggers are highlighted as
+  conflicts, and priority can be changed with move-up and move-down controls.
+- Activity rows can disable the rule that caused them, while the popover shows the
+  reason for an active automatic profile.
+
 ## 0.1.29
 
 - The first built-in profile is now Default and captures the configured starting

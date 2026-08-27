@@ -127,6 +127,7 @@ struct StatusPanel: View {
     var canUndoProfile = false
     var onApplyProfile: (String) -> Void = { _ in }
     var onUndoProfile: () -> Void = {}
+    var automationReason: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -219,43 +220,51 @@ struct StatusPanel: View {
     }
 
     private var profileSwitcher: some View {
-        HStack(spacing: 8) {
-            Menu {
-                ForEach(profiles) { profile in
-                    Button {
-                        onApplyProfile(profile.id)
-                    } label: {
-                        if profile.id == activeProfileID {
-                            Label(profile.name, systemImage: "checkmark")
-                        } else {
-                            Text(profile.name)
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                Menu {
+                    ForEach(profiles) { profile in
+                        Button {
+                            onApplyProfile(profile.id)
+                        } label: {
+                            if profile.id == activeProfileID {
+                                Label(profile.name, systemImage: "checkmark")
+                            } else {
+                                Text(profile.name)
+                            }
                         }
                     }
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: "square.stack.3d.up.fill")
+                            .foregroundStyle(StowTheme.stops(for: .tidy).first ?? StowTheme.blue)
+                        Text(profiles.first(where: { $0.id == activeProfileID })?.name
+                             ?? "Choose Profile")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(StowTheme.ink)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(StowTheme.inkMuted)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Aurora.inset, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(StowTheme.hairline))
                 }
-            } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "square.stack.3d.up.fill")
-                        .foregroundStyle(StowTheme.stops(for: .tidy).first ?? StowTheme.blue)
-                    Text(profiles.first(where: { $0.id == activeProfileID })?.name
-                         ?? "Choose Profile")
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(StowTheme.ink)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(StowTheme.inkMuted)
+                .menuStyle(.borderlessButton)
+                Spacer(minLength: 0)
+                if canUndoProfile {
+                    Button("Undo", systemImage: "arrow.uturn.backward", action: onUndoProfile)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .buttonStyle(.plain)
+                        .foregroundStyle(StowTheme.inkSoft)
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Aurora.inset, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(StowTheme.hairline))
             }
-            .menuStyle(.borderlessButton)
-            Spacer(minLength: 0)
-            if canUndoProfile {
-                Button("Undo", systemImage: "arrow.uturn.backward", action: onUndoProfile)
-                    .font(.system(size: 10.5, weight: .medium))
-                    .buttonStyle(.plain)
-                    .foregroundStyle(StowTheme.inkSoft)
+            if let automationReason {
+                Label(automationReason, systemImage: "wand.and.stars")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(StowTheme.blue)
+                    .lineLimit(1)
             }
         }
         .padding(.horizontal, 14)

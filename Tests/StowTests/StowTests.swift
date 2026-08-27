@@ -562,6 +562,28 @@ import CoreGraphics
     #expect(store.rules.isEmpty)
 }
 
+@Test @MainActor func duplicateRuleTriggersAreConflictsAndPriorityCanMove() {
+    let store = Store(fixtureConfig: .default)
+    let first = Config.Rule(id: "first", isEnabled: true,
+                            condition: .frontmostAppIs(bundleID: "us.zoom.xos"),
+                            action: .applyProfile(id: "focus"))
+    let second = Config.Rule(id: "second", isEnabled: true,
+                             condition: .frontmostAppIs(bundleID: "us.zoom.xos"),
+                             action: .applyProfile(id: "screen-share"))
+    let unrelated = Config.Rule(id: "other", isEnabled: true,
+                                condition: .frontmostAppIs(bundleID: "com.apple.finder"),
+                                action: .applyProfile(id: "everything"))
+    store.addRule(first)
+    store.addRule(second)
+    store.addRule(unrelated)
+
+    #expect(Store.conflictingRuleIDs(in: store.rules) == ["first", "second"])
+    store.moveRule(id: "second", by: -1)
+    #expect(store.rules.map(\.id) == ["second", "first", "other"])
+    store.setRule(id: "first", isEnabled: false)
+    #expect(Store.conflictingRuleIDs(in: store.rules).isEmpty)
+}
+
 // MARK: - Press-action coverage: owner resolution and summary arithmetic
 //
 // The AX walk in BarItemOwners.claims() and PressActionProbe.probe(pid:) needs a

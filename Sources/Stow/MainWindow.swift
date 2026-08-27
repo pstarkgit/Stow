@@ -1065,7 +1065,7 @@ private struct ProfilesContentView: View {
 
     private func apply(_ profile: Config.Profile) {
         applyingProfileID = profile.id
-        ruleEngine.noteManualSelection()
+        ruleEngine.noteManualSelection(selectedProfileID: profile.id)
         Task { @MainActor in
             await Task.yield()
             let previous = store.config
@@ -1101,25 +1101,25 @@ private struct ProfilesContentView: View {
     }
 
     private func createProfile() {
-        ruleEngine.noteManualSelection()
         let profile = store.createProfile(name: "New Profile", candidateOrder: candidateOrder)
+        ruleEngine.noteManualSelection(selectedProfileID: profile.id)
         draftName = profile.name
     }
 
     private func duplicateActive() {
         guard let activeProfile else { return }
-        ruleEngine.noteManualSelection()
         if let copy = store.duplicateProfile(id: activeProfile.id) {
+            ruleEngine.noteManualSelection(selectedProfileID: copy.id)
             draftName = copy.name
         }
     }
 
     private func deleteActive() {
         guard let activeProfile else { return }
-        ruleEngine.noteManualSelection()
         let nextID = store.deleteProfile(id: activeProfile.id)
         guard let nextID,
               let next = store.profiles.first(where: { $0.id == nextID }) else { return }
+        ruleEngine.noteManualSelection(selectedProfileID: next.id)
         draftName = next.name
         apply(next)
     }
@@ -1135,16 +1135,17 @@ private struct RulesContentView: View {
     @State private var selectedProfileID = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            PaneHeader(title: "Rules",
-                       subtitle: "Let context choose the right menu-bar layout for you.")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                PaneHeader(title: "Rules",
+                           subtitle: "Let context choose the right menu-bar layout for you.")
 
-            CapabilityNote(symbol: "wand.and.stars",
-                           label: ruleEngine.activeRuleID == nil ? "LIVE" : "ACTIVE",
-                           title: "Frontmost-app automation is running",
-                           detail: ruleEngine.lastStatus)
+                CapabilityNote(symbol: "wand.and.stars",
+                               label: ruleEngine.activeRuleID == nil ? "LIVE" : "ACTIVE",
+                               title: "Frontmost-app automation is running",
+                               detail: ruleEngine.activeReason)
 
-            HStack(spacing: 9) {
+                HStack(spacing: 9) {
                 AuroraMenu(options: appOptions,
                            selection: $selectedBundleID,
                            placeholder: "Choose app")
@@ -1157,9 +1158,13 @@ private struct RulesContentView: View {
                 Button("Add Rule", systemImage: "plus") { addRule() }
                     .buttonStyle(.borderedProminent)
                     .disabled(selectedBundleID.isEmpty || selectedProfileID.isEmpty)
-            }
+                }
 
-            if store.rules.isEmpty {
+                if !Store.conflictingRuleIDs(in: store.rules).isEmpty {
+                    conflictBanner
+                }
+
+                if store.rules.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "arrow.triangle.2.circlepath")
                         .font(.system(size: 22))
@@ -1175,15 +1180,26 @@ private struct RulesContentView: View {
                 .padding(.vertical, 34)
                 .background(StowTheme.card, in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(StowTheme.hairline))
-            } else {
+                } else {
                 VStack(spacing: 8) {
                     ForEach(store.rules) { rule in
                         ruleCard(rule)
                     }
                 }
+                }
+
+                if !ruleEngine.activities.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        SectionKicker("AUTOMATION ACTIVITY")
+                        ForEach(ruleEngine.activities.prefix(8)) { activity in
+                            activityRow(activity)
+                        }
+                    }
+                }
             }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(24)
         .onAppear {
             if selectedBundleID.isEmpty { selectedBundleID = appOptions.first?.value ?? "" }
             if selectedProfileID.isEmpty {
@@ -1193,7 +1209,9 @@ private struct RulesContentView: View {
     }
 
     private func ruleCard(_ rule: Config.Rule) -> some View {
-        HStack(spacing: 12) {
+        let index = store.rules.firstIndex(where: { $0.id == rule.id }) ?? 0
+        let conflicts = Store.conflictingRuleIDs(in: store.rules)
+        return HStack(spacing: 12) {
             RoundedRectangle(cornerRadius: 8)
                 .fill(ruleEngine.activeRuleID == rule.id
                       ? StowTheme.blue.opacity(0.16) : Aurora.inset)
@@ -1202,14 +1220,37 @@ private struct RulesContentView: View {
                     .foregroundStyle(ruleEngine.activeRuleID == rule.id
                                      ? StowTheme.blue : StowTheme.inkSoft))
             VStack(alignment: .leading, spacing: 3) {
-                Text(describe(rule.condition))
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(rule.isEnabled ? StowTheme.ink : StowTheme.inkMuted)
+                HStack(spacing: 7) {
+                    Text("P\(index + 1)")
+                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                        .foregroundStyle(StowTheme.blue)
+                    Text(describe(rule.condition))
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(rule.isEnabled ? StowTheme.ink : StowTheme.inkMuted)
+                    if conflicts.contains(rule.id) {
+                        Text("CONFLICT")
+                            .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                            .foregroundStyle(StowTheme.orange)
+                    }
+                }
                 Text(describe(rule.action))
                     .font(.system(size: 10.5))
                     .foregroundStyle(StowTheme.inkSoft)
             }
             Spacer(minLength: 8)
+            VStack(spacing: 1) {
+                Button("Move up", systemImage: "chevron.up") {
+                    store.moveRule(id: rule.id, by: -1)
+                }
+                .disabled(index == 0)
+                Button("Move down", systemImage: "chevron.down") {
+                    store.moveRule(id: rule.id, by: 1)
+                }
+                .disabled(index == store.rules.count - 1)
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.plain)
+            .foregroundStyle(StowTheme.inkMuted)
             Toggle("Enabled", isOn: Binding(
                 get: { rule.isEnabled },
                 set: { store.setRule(id: rule.id, isEnabled: $0) }
@@ -1264,14 +1305,8 @@ private struct RulesContentView: View {
     }
 
     private func addRule() {
-        for existing in store.rules {
-            if case .frontmostAppIs(let bundleID) = existing.condition,
-               bundleID == selectedBundleID {
-                store.removeRule(id: existing.id)
-            }
-        }
         store.addRule(.init(
-            id: "frontmost:\(selectedBundleID)",
+            id: "frontmost:\(selectedBundleID):\(UUID().uuidString.lowercased())",
             isEnabled: true,
             condition: .frontmostAppIs(bundleID: selectedBundleID),
             action: .applyProfile(id: selectedProfileID)))
@@ -1283,6 +1318,81 @@ private struct RulesContentView: View {
             ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
                 .map { FileManager.default.displayName(atPath: $0.path) }
             ?? bundleID
+    }
+
+    private func activityRow(_ activity: RuleEngine.Activity) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: activitySymbol(activity.kind))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(activityTint(activity.kind))
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(activity.title)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(StowTheme.ink)
+                Text(activity.detail)
+                    .font(.system(size: 10))
+                    .foregroundStyle(StowTheme.inkMuted)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 8)
+            Text(activityAge(activity.timestamp))
+                .font(.system(size: 9.5, design: .monospaced))
+                .foregroundStyle(StowTheme.inkMuted)
+            if let ruleID = activity.ruleID,
+               store.rules.contains(where: { $0.id == ruleID && $0.isEnabled }) {
+                Button("Disable rule") { store.setRule(id: ruleID, isEnabled: false) }
+                    .font(.system(size: 9.5, weight: .medium))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(StowTheme.orange)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Aurora.inset, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(StowTheme.hairline))
+    }
+
+    private func activitySymbol(_ kind: RuleEngine.Activity.Kind) -> String {
+        switch kind {
+        case .applied: return "bolt.fill"
+        case .restored: return "arrow.uturn.backward"
+        case .failed: return "exclamationmark.triangle.fill"
+        case .manualOverride: return "hand.raised.fill"
+        case .cooldown: return "timer"
+        }
+    }
+
+    private func activityTint(_ kind: RuleEngine.Activity.Kind) -> Color {
+        switch kind {
+        case .applied, .restored: return StowTheme.stops(for: .tidy).first ?? StowTheme.blue
+        case .failed: return StowTheme.orange
+        case .manualOverride, .cooldown: return StowTheme.blue
+        }
+    }
+
+    private func activityAge(_ date: Date) -> String {
+        let seconds = max(0, Int(Date().timeIntervalSince(date)))
+        if seconds < 60 { return "now" }
+        if seconds < 3_600 { return "\(seconds / 60)m" }
+        if seconds < 86_400 { return "\(seconds / 3_600)h" }
+        return "\(seconds / 86_400)d"
+    }
+
+    private var conflictBanner: some View {
+        let count = Store.conflictingRuleIDs(in: store.rules).count
+        return HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(StowTheme.orange)
+            Text("\(count) enabled rules share an application trigger. The highest priority wins.")
+                .font(.system(size: 10.5))
+                .foregroundStyle(StowTheme.inkSoft)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(StowTheme.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9)
+            .strokeBorder(StowTheme.orange.opacity(0.28)))
     }
 }
 
@@ -1433,6 +1543,22 @@ private struct SettingsContentView: View {
 }
 
 // MARK: - Shared
+
+private struct SectionKicker: View {
+    let title: String
+
+    init(_ title: String) { self.title = title }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                .kerning(1.2)
+                .foregroundStyle(StowTheme.sweep(for: .tidy))
+            Rectangle().fill(StowTheme.hairline).frame(height: 1)
+        }
+    }
+}
 
 private struct PaneHeader: View {
     let title: String
