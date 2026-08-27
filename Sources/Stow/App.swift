@@ -177,13 +177,15 @@ struct StowApp: App {
                 onApplyProfile: { profileID in
                     guard let profile = store.profiles.first(where: { $0.id == profileID })
                     else { return }
-                    ruleEngine.noteManualSelection()
+                    ruleEngine.noteManualSelection(selectedProfileID: profile.id)
                     _ = activateProfile(profile)
                 },
                 onUndoProfile: {
-                    ruleEngine.noteManualSelection()
+                    ruleEngine.noteManualSelection(selectedProfileID: store.undoProfileID)
                     undoProfile()
-                })
+                },
+                automationReason: ruleEngine.activeRuleID == nil
+                    ? nil : ruleEngine.activeReason)
                 .environmentObject(updater)
                 .environmentObject(store)
                 // Re-measure every time the panel opens: the window server and the
@@ -215,7 +217,7 @@ struct StowApp: App {
                     let candidateOrder = hider.currentCandidates().map(\.bundleID)
                     store.ensureProfileLayouts(candidateOrder: candidateOrder)
                     ProfileHotKeys.shared.register(profiles: store.profiles) { profile in
-                        ruleEngine.noteManualSelection()
+                        ruleEngine.noteManualSelection(selectedProfileID: profile.id)
                         _ = activateProfile(profile)
                     }
                     if let activeProfile = store.activeProfile {
@@ -251,6 +253,9 @@ struct StowApp: App {
                             guard let profile = store.profiles.first(where: { $0.id == profileID })
                             else { return false }
                             return activateProfile(profile)
+                        },
+                        profileName: { profileID in
+                            store.profiles.first(where: { $0.id == profileID })?.name ?? profileID
                         })
 
                     // Quiet check at launch, then every six hours, matching
