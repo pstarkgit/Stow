@@ -32,6 +32,7 @@ struct MainWindow: View {
     @State private var selectedDisplayID: CGDirectDisplayID = CGMainDisplayID()
     @ObservedObject private var target = WindowTarget.shared
     @EnvironmentObject private var hider: HideController
+    @EnvironmentObject private var ruleEngine: RuleEngine
 
     /// The screen the header's display picker currently has selected. Falls back
     /// through `NSScreen.main` and the first available screen so a display that
@@ -73,7 +74,9 @@ struct MainWindow: View {
         .task(id: selectedDisplayID) {
             await doctor.run(screen: selectedScreen,
                              spacerWidth: hider.measuredSeamWidth(),
-                             seamWindows: hider.seamWindowNumbers())
+                             seamWindows: hider.seamWindowNumbers(),
+                             profileHotKeyCount: ProfileHotKeys.shared.registeredCount,
+                             automationRunning: ruleEngine.isRunning)
         }
     }
 
@@ -272,7 +275,9 @@ struct MainWindow: View {
                 Task {
                     await doctor.run(screen: selectedScreen,
                                      spacerWidth: hider.measuredSeamWidth(),
-                                     seamWindows: hider.seamWindowNumbers())
+                                     seamWindows: hider.seamWindowNumbers(),
+                                     profileHotKeyCount: ProfileHotKeys.shared.registeredCount,
+                                     automationRunning: ruleEngine.isRunning)
                 }
             } label: {
                 Image(systemName: "arrow.clockwise")
@@ -1064,9 +1069,12 @@ private struct ProfilesContentView: View {
         Task { @MainActor in
             await Task.yield()
             let previous = store.config
+            let previousUndo = store.undoProfileID
             let updated = store.apply(profile, candidateOrder: candidateOrder)
             let outcome = hider.arrangeByMovingItems(from: updated)
-            if !outcome.isClean { store.config = previous }
+            if !outcome.isClean {
+                store.restoreProfileState(config: previous, undoProfileID: previousUndo)
+            }
             applyingProfileID = nil
         }
     }
@@ -1079,7 +1087,7 @@ private struct ProfilesContentView: View {
 
     private func profileSymbol(_ profile: Config.Profile) -> String {
         switch profile.id {
-        case "presenting": return "rectangle.on.rectangle.slash"
+        case "presenting": return "house.fill"
         case "screen-share": return "rectangle.inset.filled.and.person.filled"
         case "focus": return "scope"
         case "everything": return "eye.fill"
@@ -1119,11 +1127,7 @@ private struct ProfilesContentView: View {
 
 // MARK: - Rules
 
-/// Design section 10's shape for a rule, driven by `Store` rather than the two
-/// hardcoded example cards this pane used to show. There is still no rules
-/// engine to author or evaluate a condition against, so this pane stays
-/// read-only, but what it lists is now exactly what `Config.rules` persists,
-/// not illustrative text that never matched what was actually saved.
+/// Live frontmost-application rules backed by `RuleEngine` and persisted in `Store`.
 private struct RulesContentView: View {
     @EnvironmentObject var store: Store
     @EnvironmentObject var ruleEngine: RuleEngine

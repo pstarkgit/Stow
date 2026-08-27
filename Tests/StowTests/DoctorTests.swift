@@ -55,6 +55,14 @@ private func doctorFinding(
     #expect(finding.detail == "boundary could not be measured")
 }
 
+@Test @MainActor func profileAutomationChecksRequireFourShortcutsAndARunningEngine() {
+    let doctor = BarDoctor()
+    #expect(doctor.checkProfileHotkeys(registeredCount: 4).status == .pass)
+    #expect(doctor.checkProfileHotkeys(registeredCount: 3).status == .warn("Restart Stow"))
+    #expect(doctor.checkAutomation(running: true).status == .pass)
+    #expect(doctor.checkAutomation(running: false).status == .warn("Restart Stow"))
+}
+
 @Test func builderAttributionCreditsGSDai() {
     #expect(StowVersion.builderAttribution == "built by GSD-ai")
 }

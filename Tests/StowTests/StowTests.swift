@@ -413,7 +413,7 @@ import CoreGraphics
     let profiles = Config.default.profileList
     #expect(profiles.count == 4)
     let names = Set(profiles.map(\.name))
-    #expect(names == ["Presenting", "Screen Share", "Focus", "Everything"])
+    #expect(names == ["Default", "Screen Share", "Focus", "Everything"])
     let ids = Set(profiles.map(\.id))
     #expect(ids.count == 4, "every profile must have a distinct id")
 }
@@ -430,6 +430,18 @@ import CoreGraphics
 
     #expect(profiles.map { $0.appZones?.values.filter { $0 == .tucked }.count } == [4, 3, 1, 0])
     #expect(profiles[0].appZones == base)
+    #expect(profiles[0].name == "Default")
+}
+
+@Test @MainActor func untouchedLegacyPresentingProfileMigratesToDefaultName() {
+    var fixture = Config.default
+    fixture.profiles?[0].name = "Presenting"
+    let store = Store(fixtureConfig: fixture)
+
+    store.ensureProfileLayouts(candidateOrder: ["a"])
+
+    #expect(store.profiles.first?.id == "presenting")
+    #expect(store.profiles.first?.name == "Default")
 }
 
 @Test @MainActor func applyingAProfileChangesTheRealZoneConfiguration() {
@@ -513,6 +525,24 @@ import CoreGraphics
     let focusAfter = try #require(store.profiles.first { $0.id == "focus" })
     #expect(presenting.appZones?["a"] == .pinned)
     #expect(focusAfter == focusBefore)
+}
+
+@Test @MainActor func undoReturnsToThePreviousProfileExactlyOnce() throws {
+    var fixture = Config.default
+    fixture.zoneByBundleID = ["a": .tucked, "b": .tucked]
+    let store = Store(fixtureConfig: fixture)
+    store.ensureProfileLayouts(candidateOrder: ["a", "b"])
+    let everything = try #require(store.profiles.first { $0.id == "everything" })
+
+    _ = store.apply(everything, candidateOrder: ["a", "b"])
+    #expect(store.undoProfileID == "presenting")
+    #expect(store.config.zone(forBundleID: "a") == .pinned)
+
+    let undone = try #require(store.undoProfile(candidateOrder: ["a", "b"]))
+    #expect(undone.activeProfileID == "presenting")
+    #expect(undone.zone(forBundleID: "a") == .tucked)
+    #expect(store.undoProfileID == nil)
+    #expect(store.undoProfile(candidateOrder: ["a", "b"]) == nil)
 }
 
 @Test @MainActor func addingAndRemovingARuleUpdatesTheExposedList() {

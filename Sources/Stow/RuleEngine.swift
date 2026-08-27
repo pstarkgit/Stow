@@ -12,6 +12,8 @@ final class RuleEngine: ObservableObject {
     @Published private(set) var activeRuleID: String?
     @Published private(set) var lastStatus = "Watching for profile rules"
 
+    var isRunning: Bool { observer != nil }
+
     private var rulesProvider: RulesProvider = { [] }
     private var activeProfileProvider: ActiveProfileProvider = { nil }
     private var applyProfile: ApplyProfile = { _ in false }

@@ -13,6 +13,15 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.29
+
+- The first built-in profile is now Default and captures the configured starting
+  arrangement; existing untouched Presenting profiles migrate without changing IDs.
+- The menu-bar panel now shows the active profile, switches profiles directly, and
+  offers one-step Undo after a profile change.
+- Doctor now verifies all four profile shortcuts and the running automation engine.
+- Failed profile arrangements restore both the prior configuration and Undo state.
+
 ## 0.1.28
 
 - Profiles can now be created, renamed, duplicated, and saved from the current

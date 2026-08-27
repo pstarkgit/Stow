@@ -188,7 +188,7 @@ struct Config: Codable, Equatable, Sendable {
     /// `everything` (keep the whole run one hotkey away), so the four read as a
     /// real progression rather than four arbitrary names.
     static let defaultProfiles: [Profile] = [
-        Profile(id: "presenting", name: "Presenting",
+        Profile(id: "presenting", name: "Default",
                 spacerLength: 10, tuckedRunDepth: 0, hotkeyDisplay: "\u{2318}\u{21E7}1"),
         Profile(id: "screen-share", name: "Screen Share",
                 spacerLength: 10, tuckedRunDepth: 1, hotkeyDisplay: "\u{2318}\u{21E7}2"),

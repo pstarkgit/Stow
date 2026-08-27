@@ -27,6 +27,7 @@ struct BarDoctorView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var hider: HideController
+    @EnvironmentObject private var ruleEngine: RuleEngine
     @State private var appeared = false
 
     private var summary: BarDoctor.Summary { doctor.summary }
@@ -152,7 +153,9 @@ struct BarDoctorView: View {
                 Task {
                     await doctor.run(screen: screen,
                                      spacerWidth: hider.measuredSeamWidth(),
-                                     seamWindows: hider.seamWindowNumbers())
+                                     seamWindows: hider.seamWindowNumbers(),
+                                     profileHotKeyCount: ProfileHotKeys.shared.registeredCount,
+                                     automationRunning: ruleEngine.isRunning)
                 }
             } label: {
                 Image(systemName: "arrow.clockwise")
@@ -224,7 +227,9 @@ struct BarDoctorView: View {
             Task {
                 await doctor.run(screen: screen,
                                  spacerWidth: hider.measuredSeamWidth(),
-                                 seamWindows: hider.seamWindowNumbers())
+                                 seamWindows: hider.seamWindowNumbers(),
+                                 profileHotKeyCount: ProfileHotKeys.shared.registeredCount,
+                                 automationRunning: ruleEngine.isRunning)
             }
         }
     }
@@ -305,6 +310,8 @@ private struct BarFindingRow: View {
         case "pointmath": return "ruler.fill"
         case "coverage":  return "target"
         case "hotkey":    return "keyboard"
+        case "profile-hotkeys": return "command"
+        case "automation": return "wand.and.stars"
         case "spacer":    return "arrow.left.and.right"
         default:          return "checkmark.circle.fill"
         }

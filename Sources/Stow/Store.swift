@@ -29,6 +29,7 @@ final class Store: ObservableObject {
     @Published var config: Config {
         didSet { scheduleSave() }
     }
+    @Published private(set) var undoProfileID: String?
 
     /// The in-flight debounce, held as a `Task` rather than an `NSObjectProtocol`
     /// observer token or a `Timer`.
@@ -50,6 +51,7 @@ final class Store: ObservableObject {
         var loaded = Config.load()
         let removed = loaded.pruneUnavailableApps(isAvailable: Self.appIsAvailable)
         config = loaded
+        undoProfileID = nil
         for bundleID in removed { BarHomes.forget(bundleID) }
         if !removed.isEmpty { try? loaded.save() }
     }
@@ -60,6 +62,7 @@ final class Store: ObservableObject {
     /// `init()`.
     init(fixtureConfig: Config) {
         config = fixtureConfig
+        undoProfileID = nil
     }
 
     deinit {
@@ -136,8 +139,15 @@ final class Store: ObservableObject {
         let baseZones = Dictionary(uniqueKeysWithValues: candidateOrder.map {
             ($0, config.zone(forBundleID: $0))
         })
+        let renamed = profiles.map { existing -> Config.Profile in
+            var profile = existing
+            if profile.id == "presenting", profile.name == "Presenting" {
+                profile.name = "Default"
+            }
+            return profile
+        }
         let seeded = Self.seededProfiles(
-            profiles: profiles,
+            profiles: renamed,
             baseZones: baseZones,
             candidateOrder: candidateOrder)
         var updated = config
@@ -172,10 +182,15 @@ final class Store: ObservableObject {
 
     /// Activates a saved profile and returns the complete configuration the arranger must apply.
     @discardableResult
-    func apply(_ requested: Config.Profile, candidateOrder: [String]) -> Config {
+    func apply(_ requested: Config.Profile,
+               candidateOrder: [String],
+               recordUndo: Bool = true) -> Config {
         let seeded = ensureProfileLayouts(candidateOrder: candidateOrder)
         guard let profile = seeded.first(where: { $0.id == requested.id }) else { return config }
         var updated = config
+        if recordUndo, updated.activeProfileID != profile.id {
+            undoProfileID = updated.activeProfileID
+        }
         updated.activeProfileID = profile.id
         updated.spacerRestingLength = profile.spacerLength
         if let profileZones = profile.appZones {
@@ -185,6 +200,19 @@ final class Store: ObservableObject {
         }
         config = updated
         return updated
+    }
+
+    @discardableResult
+    func undoProfile(candidateOrder: [String]) -> Config? {
+        guard let undoProfileID,
+              let profile = profiles.first(where: { $0.id == undoProfileID }) else { return nil }
+        self.undoProfileID = nil
+        return apply(profile, candidateOrder: candidateOrder, recordUndo: false)
+    }
+
+    func restoreProfileState(config: Config, undoProfileID: String?) {
+        self.config = config
+        self.undoProfileID = undoProfileID
     }
 
     /// Changes one zone and records it in the active profile's snapshot.

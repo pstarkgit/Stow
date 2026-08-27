@@ -113,7 +113,9 @@ final class BarDoctor: ObservableObject {
     /// coverage scan; nil (no attached display) degrades both to an honest
     /// `.info` row rather than guessing at geometry that was never measured.
     func run(screen: NSScreen?, spacerWidth: CGFloat?,
-             seamWindows: Set<CGWindowID> = []) async {
+             seamWindows: Set<CGWindowID> = [],
+             profileHotKeyCount: Int = 0,
+             automationRunning: Bool = false) async {
         guard !running else { return }
         running = true
         defer { running = false; lastRun = Date() }
@@ -122,6 +124,8 @@ final class BarDoctor: ObservableObject {
             checkAccessibility(),
             checkPointMath(screen: screen, excluding: seamWindows),
             checkHotkeys(),
+            checkProfileHotkeys(registeredCount: profileHotKeyCount),
+            checkAutomation(running: automationRunning),
             checkSpacer(measuredWidth: spacerWidth),
             Finding(id: "coverage", title: "Press-action coverage",
                    detail: "walking the accessibility tree…",
@@ -220,6 +224,28 @@ final class BarDoctor: ObservableObject {
         }
         return Finding(id: "hotkey", title: "Emergency restore",
                        detail: "⌘⇧Esc could not be registered",
+                       status: .warn("Restart Stow"), action: nil)
+    }
+
+    func checkProfileHotkeys(registeredCount: Int) -> Finding {
+        if registeredCount == 4 {
+            return Finding(id: "profile-hotkeys", title: "Profile shortcuts",
+                           detail: "⌘⇧1 through ⌘⇧4 are registered",
+                           status: .pass, action: nil)
+        }
+        return Finding(id: "profile-hotkeys", title: "Profile shortcuts",
+                       detail: "\(registeredCount) of 4 profile shortcuts registered",
+                       status: .warn("Restart Stow"), action: nil)
+    }
+
+    func checkAutomation(running: Bool) -> Finding {
+        if running {
+            return Finding(id: "automation", title: "Profile automation",
+                           detail: "watching frontmost-application rules",
+                           status: .pass, action: nil)
+        }
+        return Finding(id: "automation", title: "Profile automation",
+                       detail: "rule engine is not running",
                        status: .warn("Restart Stow"), action: nil)
     }
 
