@@ -55,6 +55,20 @@ enum BarArranger {
         let windowID: CGWindowID
         let hostPID: pid_t
         let wantsRight: Bool
+        /// A same-app item already on the requested side. Multi-item apps such as Stats
+        /// persist their internal order and can snap a lone item back when it is dropped
+        /// beside Stow's generic boundary. Inserting beside an existing sibling lets the
+        /// owning app preserve its own group while still crossing the boundary.
+        let siblingAnchorID: CGWindowID?
+
+        init(bundleID: String, windowID: CGWindowID, hostPID: pid_t,
+             wantsRight: Bool, siblingAnchorID: CGWindowID? = nil) {
+            self.bundleID = bundleID
+            self.windowID = windowID
+            self.hostPID = hostPID
+            self.wantsRight = wantsRight
+            self.siblingAnchorID = siblingAnchorID
+        }
     }
 
     enum TransactionPhase {
@@ -224,6 +238,9 @@ enum BarArranger {
         var toMove: [TransactionMove] = []
         var expectations: [ExpectedPosition] = []
         var unresolvedOnHiddenSide = 0
+        let identifiedItems: [(windowID: CGWindowID, bundleID: String?)] = items.map {
+            ($0.windowNumber, $0.owner(in: claims)?.bundleID)
+        }
 
         // A TOTAL BUDGET, because there was none and the arithmetic was alarming.
         //
@@ -266,7 +283,12 @@ enum BarArranger {
                     bundleID: owner.bundleID,
                     windowID: item.windowNumber,
                     hostPID: item.ownerPID,
-                    wantsRight: wantsRight))
+                    wantsRight: wantsRight,
+                    siblingAnchorID: Self.siblingAnchor(
+                        bundleID: owner.bundleID,
+                        wantsRight: wantsRight,
+                        seamIndex: seamIndex,
+                        items: identifiedItems)))
             }
         }
 
@@ -298,9 +320,12 @@ enum BarArranger {
                             : "Stow could not restore this app because its boundary disappeared.",
                         recovery: "Choose Show Everything, then try again.")
                 }
-                let destination: ItemMover.Destination = wantsRight
-                    ? .rightOf(liveSeamID)
-                    : .leftOf(liveSeamID)
+                let destination: ItemMover.Destination
+                if phase == .apply, let sibling = move.siblingAnchorID {
+                    destination = wantsRight ? .leftOf(sibling) : .rightOf(sibling)
+                } else {
+                    destination = wantsRight ? .rightOf(liveSeamID) : .leftOf(liveSeamID)
+                }
                 do {
                     try ItemMover.move(windowID: move.windowID,
                                        to: destination,
@@ -333,6 +358,21 @@ enum BarArranger {
     /// make every arrangement fail.
     nonisolated static func unresolvedItemIsUnsafe(index: Int, seamIndex: Int) -> Bool {
         index < seamIndex
+    }
+
+    /// Finds the nearest item from the same app that is already on the requested side.
+    /// A wrong-side item can then be inserted into its app's existing group instead of next
+    /// to the generic Stow boundary, which Stats immediately undoes to restore widget order.
+    nonisolated static func siblingAnchor(
+        bundleID: String,
+        wantsRight: Bool,
+        seamIndex: Int,
+        items: [(windowID: CGWindowID, bundleID: String?)]
+    ) -> CGWindowID? {
+        let matches = items.enumerated().filter { index, item in
+            item.bundleID == bundleID && (wantsRight ? index > seamIndex : index < seamIndex)
+        }
+        return wantsRight ? matches.first?.element.windowID : matches.last?.element.windowID
     }
 
     private static func verificationFailures(

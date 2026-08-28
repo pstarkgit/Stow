@@ -712,6 +712,13 @@ private func makeOwner(name: String, pid: pid_t, axLeftEdge: CGFloat) -> BarItem
     #expect(grouped.map(\.item.windowNumber) == [1, 2])
 }
 
+@Test func widenedPanelKeepsTenAppsInlineAndScrollsTheEleventh() {
+    #expect(SubBar.shelfLayout(appCount: 10,
+                               panelWidth: StatusPanel.panelWidth) == .inline)
+    #expect(SubBar.shelfLayout(appCount: 11,
+                               panelWidth: StatusPanel.panelWidth) == .scrolling)
+}
+
 // MARK: - Zone membership by bundle id
 //
 // BarItemOwners.claims() recovers a bundle id that survives a relaunch, which

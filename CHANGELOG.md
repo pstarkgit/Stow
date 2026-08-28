@@ -13,6 +13,13 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.31
+
+- The menu-bar popup is wider and keeps up to ten hidden apps visible in one row
+  before switching to horizontal scrolling.
+- Multi-widget apps now move a misplaced item beside one of their existing widgets,
+  preventing saved app ordering from snapping it back across Stow's boundary.
+
 ## 0.1.30
 
 - Rules now explain why a profile is active and keep a bounded activity history of

@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 import Testing
 @testable import Stow
 
@@ -87,6 +88,25 @@ import Testing
     #expect(ItemMover.shouldRetry(after: 1))
     #expect(ItemMover.shouldRetry(after: 2))
     #expect(!ItemMover.shouldRetry(after: 3))
+}
+
+@Test func multiItemAppMovesBesideItsSiblingOnTheRequestedSide() {
+    let layout: [(windowID: CGWindowID, bundleID: String?)] = [
+        (7311, "eu.exelban.Stats"),
+        (1032, "com.amazon.kiro.crew"),
+        (6683, "com.openai.codex"),
+        (30, "com.apple.KerberosMenuExtra"),
+        (155, "com.microsoft.OneDrive"),
+        (7318, "dev.starkpat.stow"),
+        (7192, "eu.exelban.Stats"),
+        (7190, "eu.exelban.Stats"),
+        (7195, "eu.exelban.Stats"),
+    ]
+
+    #expect(BarArranger.siblingAnchor(bundleID: "eu.exelban.Stats",
+                                      wantsRight: true,
+                                      seamIndex: 5,
+                                      items: layout) == 7192)
 }
 
 @Test func itemMoverDoesNotAcceptOneTransientCorrectFrameAsSettled() {
