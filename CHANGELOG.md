@@ -13,6 +13,11 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.32
+
+- Clicking a hidden app now waits until its menu-bar item is visibly restored before
+  opening its menu, preventing menus such as ACME from appearing at the screen's far-left edge.
+
 ## 0.1.31
 
 - The menu-bar popup is wider and keeps up to ten hidden apps visible in one row

@@ -165,6 +165,56 @@ final class PressActionProbe {
         return false
     }
 
+    /// Hidden sentinels must never be pressed. ACME reports x=-1 while tucked; pressing
+    /// that element opens its menu but macOS clamps the menu to the far-left screen edge.
+    nonisolated static func positionIsVisible(_ x: CGFloat) -> Bool { x > 0 }
+
+    /// Waits for AX to publish the WindowServer move before opening the target menu.
+    /// Replaces the fixed 120ms delay that regularly raced ACME's stale x=-1 position.
+    nonisolated static func waitForVisiblePressItem(pid: pid_t,
+                                                    timeout: TimeInterval = 1.0) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if hasVisiblePressItem(pid: pid) { return true }
+            Thread.sleep(forTimeInterval: 0.02)
+        } while Date() < deadline
+        return false
+    }
+
+    nonisolated private static func asAXValue(_ value: CFTypeRef?) -> AXValue? {
+        guard let value, CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        return unsafeDowncast(value, to: AXValue.self)
+    }
+
+    nonisolated private static func hasVisiblePressItem(pid: pid_t) -> Bool {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.05)
+
+        var extrasRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, "AXExtrasMenuBar" as CFString,
+                                            &extrasRef) == .success,
+              let extras = asElement(extrasRef) else { return false }
+        var childrenRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(extras, kAXChildrenAttribute as CFString,
+                                            &childrenRef) == .success,
+              let children = childrenRef as? [AXUIElement] else { return false }
+
+        for child in children {
+            var namesRef: CFArray?
+            guard AXUIElementCopyActionNames(child, &namesRef) == .success,
+                  let names = namesRef as? [String],
+                  names.contains(kAXPressAction as String) else { continue }
+            var positionRef: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(child, kAXPositionAttribute as CFString,
+                                                &positionRef) == .success,
+                  let value = asAXValue(positionRef) else { continue }
+            var point = CGPoint.zero
+            guard AXValueGetValue(value, .cgPoint, &point) else { continue }
+            if positionIsVisible(point.x) { return true }
+        }
+        return false
+    }
+
     /// How long a single deliberate press may take. Far longer than the walk timeout,
     /// because the target app is building a menu rather than answering a field read.
     nonisolated static let pressTimeout: Float = 2.0

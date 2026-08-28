@@ -636,9 +636,45 @@ final class RevealCoordinator: ObservableObject {
         // per-app messaging timeout, which is affordable once per click and is not affordable
         // per move, which is why the arrange path keeps using its own cache.
         let identities = BarItemOwners.identities()
-        guard let item = ItemMover.positionableItems()
-            .first(where: { $0.owner(in: identities)?.bundleID == bundleID })
-        else { throw Failure.itemNotFound(bundleID: bundleID) }
-        return item
+        let items = ItemMover.positionableItems()
+        if let item = items.first(where: {
+            $0.owner(in: identities)?.bundleID == bundleID
+        }) {
+            return item
+        }
+        if let item = Self.uniqueSentinelItem(bundleID: bundleID,
+                                              identities: identities,
+                                              items: items) {
+            return item
+        }
+        throw Failure.itemNotFound(bundleID: bundleID)
+    }
+
+    /// Resolves one hidden item whose application reports AX's `x = -1` sentinel.
+    ///
+    /// ACME does this while tucked: its real WindowServer item remains at x-3930, but its
+    /// AX child reports x=-1, so normal position matching cannot connect the two. The fallback
+    /// is intentionally conservative: the target app must own exactly one sentinel item and,
+    /// after removing every window claimed by a real AX position plus oversized spacer
+    /// mechanisms, exactly one hidden window may remain. Any ambiguity still fails closed.
+    static func uniqueSentinelItem(
+        bundleID: String,
+        identities: [BarItemOwners.Owner],
+        items: [ObservedItem]
+    ) -> ObservedItem? {
+        let sentinels = identities.filter {
+            $0.bundleID == bundleID && $0.axLeftEdge == -1
+        }
+        guard sentinels.count == 1 else { return nil }
+
+        let positioned = identities.filter { $0.axLeftEdge != -1 }
+        let plausibleHidden = items.filter {
+            $0.frame.minX < 0
+                && $0.frame.width > 0
+                && $0.frame.width <= 400
+                && $0.owner(in: positioned) == nil
+        }
+        guard plausibleHidden.count == 1 else { return nil }
+        return plausibleHidden[0]
     }
 }

@@ -3,6 +3,57 @@ import Foundation
 import CoreGraphics
 @testable import Stow
 
+@Test @MainActor func sentinelOwnerResolvesToTheOnlyUnclaimedHiddenWindow() {
+    let acme = BarItemOwners.Owner(name: "ACME", bundleID: "com.amazon.ACME",
+                                   pid: 4050, axLeftEdge: -1)
+    let chatGPT = BarItemOwners.Owner(name: "ChatGPT", bundleID: "com.openai.codex",
+                                      pid: 6683, axLeftEdge: -3967)
+    let items = [
+        ObservedItem(windowNumber: 6683, ownerPID: 1, bundleID: nil,
+                     ownerName: "Control Center",
+                     frame: CGRect(x: -3968, y: 0, width: 38, height: 33),
+                     isOnScreen: false),
+        ObservedItem(windowNumber: 155, ownerPID: 1, bundleID: nil,
+                     ownerName: "Control Center",
+                     frame: CGRect(x: -3930, y: 0, width: 36, height: 33),
+                     isOnScreen: false),
+        ObservedItem(windowNumber: 8392, ownerPID: 1, bundleID: nil,
+                     ownerName: "Control Center",
+                     frame: CGRect(x: -3894, y: 0, width: 5_016, height: 33),
+                     isOnScreen: true),
+    ]
+
+    #expect(RevealCoordinator.uniqueSentinelItem(bundleID: acme.bundleID,
+                                                  identities: [acme, chatGPT],
+                                                  items: items)?.windowNumber == 155)
+}
+
+@Test @MainActor func sentinelOwnerRefusesAnAmbiguousHiddenWindow() {
+    let acme = BarItemOwners.Owner(name: "ACME", bundleID: "com.amazon.ACME",
+                                   pid: 4050, axLeftEdge: -1)
+    let items = [
+        ObservedItem(windowNumber: 155, ownerPID: 1, bundleID: nil,
+                     ownerName: "Control Center",
+                     frame: CGRect(x: -3930, y: 0, width: 36, height: 33),
+                     isOnScreen: false),
+        ObservedItem(windowNumber: 156, ownerPID: 1, bundleID: nil,
+                     ownerName: "Control Center",
+                     frame: CGRect(x: -3890, y: 0, width: 36, height: 33),
+                     isOnScreen: false),
+    ]
+
+    #expect(RevealCoordinator.uniqueSentinelItem(bundleID: acme.bundleID,
+                                                  identities: [acme],
+                                                  items: items) == nil)
+}
+
+@Test func hiddenSentinelPositionIsNeverPressed() {
+    #expect(!PressActionProbe.positionIsVisible(-1))
+    #expect(!PressActionProbe.positionIsVisible(0))
+    #expect(PressActionProbe.positionIsVisible(1))
+    #expect(PressActionProbe.positionIsVisible(1_200))
+}
+
 @Test func revealPresentationClampsProgressAndRoundsAccessibilitySecondsUp() {
     let start = Date(timeIntervalSinceReferenceDate: 1_000)
     let presentation = RevealPresentation(bundleID: "com.example.app",

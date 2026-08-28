@@ -141,9 +141,19 @@ struct StowApp: App {
                                             seamWindow: hider.tuckedSeamWindow,
                                             duration: store.config.revealDuration)
                     } catch {
-                        // Swallowed on purpose. There is no UI here to report a reveal failure
-                        // to, and the press below still runs regardless of which branch this
-                        // took, exactly matching the pre-existing hidden-item behaviour.
+                        // Never press an item whose reveal failed. ACME reports AX x=-1 while
+                        // tucked; pressing that sentinel opens its menu at the far-left edge.
+                        // When macOS has removed the status-item window entirely, use the app's
+                        // ordinary reopen path instead. Verified with ACME: this opens its real
+                        // Overview window at a normal screen position rather than the left-edge
+                        // fallback menu. Normal hidden items still take the menu reveal path.
+                        guard let url = NSWorkspace.shared.urlForApplication(
+                            withBundleIdentifier: app.bundleID) else { return }
+                        let configuration = NSWorkspace.OpenConfiguration()
+                        configuration.activates = true
+                        NSWorkspace.shared.openApplication(at: url,
+                                                           configuration: configuration) { _, _ in }
+                        return
                     }
 
                     // Detached, NOT a main-actor Task. The press blocks for up to about 1.76s
@@ -151,9 +161,10 @@ struct StowApp: App {
                     // modal. On the main actor that is a frozen panel for an action the user
                     // already saw succeed.
                     Task.detached {
-                        // Let the panel's own menu session finish tearing down first, or the
-                        // press races the dismissal and is swallowed.
-                        try? await Task.sleep(for: .milliseconds(120))
+                        // Let the panel's own menu session finish, then wait for AX to catch up
+                        // with the WindowServer move. A fixed delay left ACME at x=-1 and caused
+                        // macOS to clamp its menu to the far-left edge.
+                        guard PressActionProbe.waitForVisiblePressItem(pid: pid) else { return }
                         _ = PressActionProbe.press(pid: pid)
                     }
                 },
