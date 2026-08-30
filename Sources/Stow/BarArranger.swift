@@ -42,8 +42,6 @@ enum BarArranger {
         var alreadyCorrect: [String] = []
         /// Apps that should have moved and did not, with why.
         var failed: [Failure] = []
-        /// True when completed moves were reversed because the transaction did not verify.
-        var rolledBack = false
         /// Total time in the moves themselves.
         var cost: TimeInterval = 0
 
@@ -71,32 +69,27 @@ enum BarArranger {
         }
     }
 
-    enum TransactionPhase {
-        case apply
-        case rollback
-    }
-
-    /// Runs the mutation half of an arrange as an all-or-nothing transaction.
+    /// Runs one forward-only mutation pass.
     ///
-    /// The closures make failure, verification, and rollback deterministic in tests;
-    /// the live caller supplies `ItemMover` and a fresh bar scan.
-    static func executeTransaction(
+    /// A failed arrange is always followed by `Show Everything`, so reversing successful moves
+    /// provides no visibility safety. Synthetic rollback instead multiplies the failure surface:
+    /// the original refusal can be followed by several new refused drags. Keep completed work,
+    /// rescan, and let the bounded fresh pass move only what remains.
+    static func executePass(
         moves: [TransactionMove],
         initialFailures: [Outcome.Failure] = [],
-        perform: (TransactionMove, Bool, TransactionPhase) -> Outcome.Failure?,
+        perform: (TransactionMove, Bool) -> Outcome.Failure?,
         verify: () -> [Outcome.Failure]
     ) -> Outcome {
         var outcome = Outcome()
         outcome.failed = initialFailures
         guard outcome.failed.isEmpty else { return outcome }
 
-        var completed: [TransactionMove] = []
         for move in moves {
-            if let failure = perform(move, move.wantsRight, .apply) {
+            if let failure = perform(move, move.wantsRight) {
                 outcome.failed.append(failure)
                 break
             }
-            completed.append(move)
             outcome.moved.append(move.bundleID)
         }
 
@@ -104,14 +97,6 @@ enum BarArranger {
             outcome.failed.append(contentsOf: verify())
         }
 
-        guard !outcome.failed.isEmpty, !completed.isEmpty else { return outcome }
-        for move in completed.reversed() {
-            if let failure = perform(move, !move.wantsRight, .rollback) {
-                outcome.failed.append(failure)
-            }
-        }
-        outcome.rolledBack = true
-        outcome.moved.removeAll()
         return outcome
     }
 
@@ -283,14 +268,15 @@ enum BarArranger {
                     bundleID: owner.bundleID,
                     windowID: item.windowNumber,
                     hostPID: item.ownerPID,
-                    wantsRight: wantsRight,
-                    siblingAnchorID: Self.siblingAnchor(
-                        bundleID: owner.bundleID,
-                        wantsRight: wantsRight,
-                        seamIndex: seamIndex,
-                        items: identifiedItems)))
+                    wantsRight: wantsRight))
             }
         }
+
+        // Multi-item apps own the order inside their group. Crossing their farthest item first
+        // asks the app to split and invert that order, which iStat Menus immediately undoes.
+        // Move the item nearest the boundary first, then chain every remaining item beside the
+        // sibling that just crossed. That preserves the app's order throughout the pass.
+        toMove = movementPlan(moves: toMove, seamIndex: seamIndex, items: identifiedItems)
 
         var preflightFailures: [Outcome.Failure] = []
         if unresolvedOnHiddenSide > 0 {
@@ -301,11 +287,11 @@ enum BarArranger {
                 recovery: "Choose Show Everything and reopen Arrange."))
         }
 
-        let transaction = executeTransaction(
+        let pass = executePass(
             moves: toMove,
             initialFailures: preflightFailures,
-            perform: { move, wantsRight, phase in
-                if phase == .apply, Date() >= deadline {
+            perform: { move, wantsRight in
+                if Date() >= deadline {
                     return Outcome.Failure(
                         bundleID: move.bundleID,
                         reason: "the move took longer than Stow's"
@@ -315,13 +301,11 @@ enum BarArranger {
                 guard let liveSeamID = seamWindow() else {
                     return Outcome.Failure(
                         bundleID: move.bundleID,
-                        reason: phase == .apply
-                            ? "the Stow boundary disappeared during the move."
-                            : "Stow could not restore this app because its boundary disappeared.",
+                        reason: "the Stow boundary disappeared during the move.",
                         recovery: "Choose Show Everything, then try again.")
                 }
                 let destination: ItemMover.Destination
-                if phase == .apply, let sibling = move.siblingAnchorID {
+                if let sibling = move.siblingAnchorID {
                     destination = wantsRight ? .leftOf(sibling) : .rightOf(sibling)
                 } else {
                     destination = wantsRight ? .rightOf(liveSeamID) : .leftOf(liveSeamID)
@@ -334,20 +318,15 @@ enum BarArranger {
                 } catch {
                     return Outcome.Failure(
                         bundleID: move.bundleID,
-                        reason: phase == .apply
-                            ? friendlyMoveReason(error)
-                            : "automatic rollback was refused by macOS.",
-                        recovery: phase == .apply
-                            ? "Try again; if it repeats, Command-drag that icon across Stow."
-                            : "Use Show Everything and Command-drag the icon back if needed.")
+                        reason: friendlyMoveReason(error),
+                        recovery: "Try again; if it repeats, Command-drag that icon across Stow.")
                 }
             },
             verify: {
                 verificationFailures(expectations: expectations, seamWindow: seamWindow)
             })
-        outcome.moved = transaction.moved
-        outcome.failed.append(contentsOf: transaction.failed)
-        outcome.rolledBack = transaction.rolledBack
+        outcome.moved = pass.moved
+        outcome.failed.append(contentsOf: pass.failed)
 
         outcome.cost = Date().timeIntervalSince(began)
         return outcome
@@ -358,6 +337,52 @@ enum BarArranger {
     /// make every arrangement fail.
     nonisolated static func unresolvedItemIsUnsafe(index: Int, seamIndex: Int) -> Bool {
         index < seamIndex
+    }
+
+    /// Orders each app's windows boundary-nearest first and chains them as one stable group.
+    ///
+    /// Apps such as iStat Menus and Stats expose several independently addressable windows under
+    /// one bundle id, but still enforce their own internal order. A generic boundary destination
+    /// is sufficient only for the first window. Every later window must land beside the window
+    /// from that same app that crossed immediately before it.
+    nonisolated static func movementPlan(
+        moves: [TransactionMove],
+        seamIndex: Int,
+        items: [(windowID: CGWindowID, bundleID: String?)]
+    ) -> [TransactionMove] {
+        let indices = Dictionary(uniqueKeysWithValues: items.enumerated().map {
+            ($0.element.windowID, $0.offset)
+        })
+        var bundleOrder: [String] = []
+        var grouped: [String: [TransactionMove]] = [:]
+        for move in moves {
+            if grouped[move.bundleID] == nil { bundleOrder.append(move.bundleID) }
+            grouped[move.bundleID, default: []].append(move)
+        }
+
+        return bundleOrder.flatMap { bundleID -> [TransactionMove] in
+            guard let bundleMoves = grouped[bundleID],
+                  let first = bundleMoves.first else { return [] }
+            let ordered = bundleMoves.sorted { lhs, rhs in
+                let lhsDistance = indices[lhs.windowID].map { abs($0 - seamIndex) } ?? Int.max
+                let rhsDistance = indices[rhs.windowID].map { abs($0 - seamIndex) } ?? Int.max
+                return lhsDistance < rhsDistance
+            }
+            var anchor = siblingAnchor(
+                bundleID: bundleID,
+                wantsRight: first.wantsRight,
+                seamIndex: seamIndex,
+                items: items)
+            return ordered.map { move in
+                defer { anchor = move.windowID }
+                return TransactionMove(
+                    bundleID: move.bundleID,
+                    windowID: move.windowID,
+                    hostPID: move.hostPID,
+                    wantsRight: move.wantsRight,
+                    siblingAnchorID: anchor)
+            }
+        }
     }
 
     /// Finds the nearest item from the same app that is already on the requested side.
@@ -494,7 +519,6 @@ enum BarArranger {
                + "  moved=\(outcome.moved.joined(separator: ","))"
                + "  correct=\(outcome.alreadyCorrect.count)"
                + "  failed=\(outcome.failed.map { "\($0.bundleID ?? "-")(\($0.reason))" }.joined(separator: "; "))"
-               + "  rolledBack=\(outcome.rolledBack)"
                + "  cost=\(String(format: "%.2f", outcome.cost))s")
     }
 

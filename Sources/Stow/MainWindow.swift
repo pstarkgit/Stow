@@ -14,7 +14,7 @@ import ServiceManagement
 /// per concern.
 ///
 /// Arrange and Profiles are live product surfaces backed by the same persisted store and
-/// transactional arranger. Rules remains an explicit preview until its context evaluator ships.
+/// forward-only arranger. Rules remains an explicit preview until its context evaluator ships.
 struct MainWindow: View {
     /// Which destination to show. A `Binding` rather than local `@State`, matching
     /// AuthBar's `MainWindow` exactly: it lets a future caller (the sub-bar's gear,
@@ -589,6 +589,8 @@ private struct ArrangeContentView: View {
         let plans = HideController.candidates(identities: BarItemOwners.cachedIdentitiesList(),
                                               liveClaims: owners,
                                               homes: BarHomes.all,
+                                              configuredBundleIDs: Set(
+                                                store.config.zoneByBundleID?.keys ?? [:].keys),
                                               ownBundle: Bundle.main.bundleIdentifier)
 
         // Live items by bundle, so decoration can prefer a real measured width and a resolved icon
@@ -778,7 +780,7 @@ private struct ArrangeContentView: View {
             .foregroundStyle(StowTheme.inkMuted)
     }
 
-    /// Applies the zones through the same transactional arranger used at launch.
+    /// Applies the zones through the explicit, forward-only arranger.
     private func apply() {
         // COALESCE. One apply for a burst of drags, not one per drag.
         //
@@ -815,7 +817,9 @@ private struct ArrangeContentView: View {
             // change, the first arrange MOVED `com.notebuddy.app` back onto the bar: it was
             // pinned, it had been swept, and nothing in the seam-moving path could recover it.
             //
-            _ = hider.arrangeByMovingItems(from: store.config)
+            _ = hider.arrangeByMovingItems(
+                from: store.config,
+                intent: .explicitUserAction)
             // Reuse the walk the apply just took. See `rescan(reusingOwners:)`.
             await rescan(reusingOwners: true)
             movingCut = false
@@ -948,7 +952,7 @@ private struct ProfilesContentView: View {
     }
 
     private var candidateOrder: [String] {
-        hider.currentCandidates().map(\.bundleID)
+        hider.currentCandidates(config: store.config).map(\.bundleID)
     }
 
     private var activeProfile: Config.Profile? {
@@ -1071,7 +1075,9 @@ private struct ProfilesContentView: View {
             let previous = store.config
             let previousUndo = store.undoProfileID
             let updated = store.apply(profile, candidateOrder: candidateOrder)
-            let outcome = hider.arrangeByMovingItems(from: updated)
+            let outcome = hider.arrangeByMovingItems(
+                from: updated,
+                intent: .explicitUserAction)
             if !outcome.isClean {
                 store.restoreProfileState(config: previous, undoProfileID: previousUndo)
             }

@@ -104,13 +104,7 @@ struct StowApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            StatusPanel(
-                state: snapshot.state,
-                // The apps Stow is HIDING, which is what the panel offers now. Resolved from
-                // the persisted zones rather than a bar scan, because a hidden item is not in a
-                // scan at all: it reports a large negative position and the owner walk drops it.
-                hiddenApps: hider.hiddenApps(from: store.config),
-                arrangementFailures: hider.lastArrangeFailures,
+            LiveStatusPanel(
                 // THE action. Toggling the seams is what Stow is for, and it is wired to the
                 // panel's one primary control.
                 onTuckAllButPinned: {
@@ -118,7 +112,6 @@ struct StowApp: App {
                     // Keep the shared snapshot current for the glyph and diagnostics.
                     remeasure()
                 },
-                presentation: hider.presentation,
                 // Clicking a hidden app opens its menu WITHOUT un-hiding it. Verified on a real
                 // hidden item at x-3036: pressed through accessibility, its menu opened.
                 onOpenHidden: { app in
@@ -173,18 +166,6 @@ struct StowApp: App {
                 onDiagnostics: { open(.doctor) },
                 onSettings: { open(.settings) },
                 onQuit: { NSApp.terminate(nil) },
-                // Drives whether the panel spends a row on an update. Both states have
-                // something to install or relaunch; every other state has nothing to offer, and
-                // offering it anyway is what made two permanent rows out of a rare event.
-                updateAvailable: {
-                    switch updater.state {
-                    case .available, .restartRequired: return true
-                    default: return false
-                    }
-                }(),
-                profiles: store.profiles,
-                activeProfileID: store.activeProfile?.id,
-                canUndoProfile: store.undoProfileID != nil,
                 onApplyProfile: { profileID in
                     guard let profile = store.profiles.first(where: { $0.id == profileID })
                     else { return }
@@ -194,11 +175,17 @@ struct StowApp: App {
                 onUndoProfile: {
                     ruleEngine.noteManualSelection(selectedProfileID: store.undoProfileID)
                     undoProfile()
-                },
-                automationReason: ruleEngine.activeRuleID == nil
-                    ? nil : ruleEngine.activeReason)
+                })
+                // MenuBarExtra content is hosted separately from the label task. Passing scalar
+                // copies of presentation and failures here left the compact panel frozen at its
+                // launch snapshot while the Arrange window correctly observed the live hider.
+                // The host below reads every panel-facing model as an EnvironmentObject, so the
+                // launch restore and later lifecycle checks redraw this exact surface.
+                .environmentObject(snapshot)
                 .environmentObject(updater)
                 .environmentObject(store)
+                .environmentObject(hider)
+                .environmentObject(ruleEngine)
                 // Re-measure every time the panel opens: the window server and the
                 // frontmost app both move under us while the panel is closed, so a
                 // value captured at launch would be stale by the first open.
@@ -225,7 +212,7 @@ struct StowApp: App {
                         remeasure()
                     }
                     store.pruneUnavailableApps()
-                    let candidateOrder = hider.currentCandidates().map(\.bundleID)
+                    let candidateOrder = hider.currentCandidates(config: store.config).map(\.bundleID)
                     store.ensureProfileLayouts(candidateOrder: candidateOrder)
                     ProfileHotKeys.shared.register(profiles: store.profiles) { profile in
                         ruleEngine.noteManualSelection(selectedProfileID: profile.id)
@@ -255,7 +242,7 @@ struct StowApp: App {
                     // Legacy Deep Storage assignments resolve to In Stow. Always use the
                     // stationary one-hatch arranger; the old two-hatch path could sweep apps
                     // the user never selected.
-                    hider.arrangeByMovingItems(from: store.config)
+                    hider.restorePresentationWithoutMoving(from: store.config)
                     remeasure()
                     ruleEngine.start(
                         rules: { store.rules },
@@ -263,7 +250,7 @@ struct StowApp: App {
                         applyProfile: { profileID in
                             guard let profile = store.profiles.first(where: { $0.id == profileID })
                             else { return false }
-                            return activateProfile(profile)
+                            return activateProfile(profile, intent: .background)
                         },
                         profileName: { profileID in
                             store.profiles.first(where: { $0.id == profileID })?.name ?? profileID
@@ -278,8 +265,8 @@ struct StowApp: App {
                         await updater.check(quiet: true)
                     }
                 }
-                // NO LAUNCH OBSERVER, deliberately, and this is the correction to a design
-                // mistake rather than a missing feature.
+                // REFRESH-ONLY lifecycle observers. They update discovery and redraw the shelf;
+                // they never arrange, reveal, hide, or synthesize input.
                 //
                 // Stow used to re-arrange on every application launch and termination. That is
                 // what made the bar look like it was constantly fighting for position: an
@@ -287,22 +274,34 @@ struct StowApp: App {
                 // unrelated app starting anywhere on the system produced two visible reflows.
                 //
                 // Ice, which this mechanism is ported from, has no such observer: a grep for
-                // `didLaunchApplication` across its source returns nothing. It only moves items
-                // when the user drags a tile in its own layout editor, and to temporarily show
-                // one item and put it back. Membership is never enforced at runtime, because a
-                // section in Ice has no membership at all: `MenuBarSection.isHidden` is purely
-                // `controlItem.state == .hideItems`. Which apps are in a section is implicit in
-                // where they sit.
+                // items. The distinction here is the whole safety boundary: observe membership,
+                // never enforce it in response to somebody else's app lifecycle.
                 //
                 // Stow keeps per-app zones, because "set this app to Tucked" is the promise it
                 // makes and a purely spatial model cannot express it. But enforcement belongs at
                 // the moment the user expresses intent, not on a timer and not on somebody
                 // else's app launching.
                 //
-                // A newly launched app lands leftmost, which is the hidden side, and Stow now
-                // leaves it there until the user says otherwise. That is the same behaviour Ice
-                // has and it is the honest trade: a new item is one drag from where you want it,
-                // and nothing moves while you are not looking.
+                // Delay one beat because NSWorkspace announces launch before some apps finish
+                // creating AXExtrasMenuBar. The refresh walks once after that item can exist.
+                .onReceive(NSWorkspace.shared.notificationCenter.publisher(
+                    for: NSWorkspace.didLaunchApplicationNotification)) { _ in
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(500))
+                            hider.refreshCandidatesWithoutMoving()
+                            hider.retryPendingSafeRestore(from: store.config)
+                            remeasure()
+                        }
+                    }
+                .onReceive(NSWorkspace.shared.notificationCenter.publisher(
+                    for: NSWorkspace.didTerminateApplicationNotification)) { _ in
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(500))
+                            hider.refreshCandidatesWithoutMoving()
+                            hider.retryPendingSafeRestore(from: store.config)
+                            remeasure()
+                        }
+                    }
                 // Launching Stow again while it is already running opens the window.
                 // On the LABEL because that view lives for the whole session: on the
                 // window's own content it would only be listening while the window was
@@ -350,14 +349,26 @@ struct StowApp: App {
         snapshot.refresh()
     }
 
-    /// Applies a profile from either the Profiles screen or its global shortcut.
+    private enum ProfileActivationIntent {
+        case explicitUserAction
+        case background
+    }
+
+    /// Applies a profile from the UI, a shortcut, or a classified background rule.
     @discardableResult
-    private func activateProfile(_ profile: Config.Profile) -> Bool {
-        let candidateOrder = hider.currentCandidates().map(\.bundleID)
+    private func activateProfile(
+        _ profile: Config.Profile,
+        intent: ProfileActivationIntent = .explicitUserAction
+    ) -> Bool {
+        let candidateOrder = hider.currentCandidates(config: store.config).map(\.bundleID)
         let previous = store.config
         let previousUndo = store.undoProfileID
         let profileConfig = store.apply(profile, candidateOrder: candidateOrder)
-        let outcome = hider.arrangeByMovingItems(from: profileConfig)
+        let arrangementIntent: HideController.ArrangementIntent = intent == .explicitUserAction
+            ? .explicitUserAction : .background
+        let outcome = hider.arrangeByMovingItems(
+            from: profileConfig,
+            intent: arrangementIntent)
         if !outcome.isClean {
             store.restoreProfileState(config: previous, undoProfileID: previousUndo)
         }
@@ -366,11 +377,13 @@ struct StowApp: App {
     }
 
     private func undoProfile() {
-        let candidateOrder = hider.currentCandidates().map(\.bundleID)
+        let candidateOrder = hider.currentCandidates(config: store.config).map(\.bundleID)
         let previous = store.config
         let previousUndo = store.undoProfileID
         guard let undoConfig = store.undoProfile(candidateOrder: candidateOrder) else { return }
-        let outcome = hider.arrangeByMovingItems(from: undoConfig)
+        let outcome = hider.arrangeByMovingItems(
+            from: undoConfig,
+            intent: .explicitUserAction)
         if !outcome.isClean {
             store.restoreProfileState(config: previous, undoProfileID: previousUndo)
         }
@@ -412,5 +425,61 @@ struct StowApp: App {
             // that is exactly how two paths drift into behaving differently.
             AppDelegate.bringWindowForward()
         }
+    }
+}
+
+/// Bridges the separately hosted MenuBarExtra content to the live shared models.
+///
+/// Keep this as an observing view rather than passing panel values from `StowApp.body`.
+/// SwiftUI can retain a menu-extra content closure independently of the label task that performs
+/// launch restoration. Scalar arguments then remain the values from the first construction even
+/// though the underlying controller changes. EnvironmentObject reads establish subscriptions in
+/// the hosted content itself, so the compact panel and the main window always render one state.
+@MainActor
+private struct LiveStatusPanel: View {
+    @EnvironmentObject private var snapshot: BarSnapshot
+    @EnvironmentObject private var updater: Updater
+    @EnvironmentObject private var store: Store
+    @EnvironmentObject private var hider: HideController
+    @EnvironmentObject private var ruleEngine: RuleEngine
+
+    var onTuckAllButPinned: () -> Void
+    var onOpenHidden: (HiddenApp) -> Void
+    var onUpdate: () -> Void
+    var onArrange: () -> Void
+    var onDiagnostics: () -> Void
+    var onSettings: () -> Void
+    var onQuit: () -> Void
+    var onApplyProfile: (String) -> Void
+    var onUndoProfile: () -> Void
+
+    var body: some View {
+        StatusPanel(
+            state: snapshot.state,
+            // Hidden apps come from persisted zones because pushed-off items are absent from the
+            // visible scan by definition.
+            hiddenApps: hider.hiddenApps(from: store.config),
+            arrangementFailures: hider.lastArrangeFailures,
+            onTuckAllButPinned: onTuckAllButPinned,
+            presentation: hider.presentation,
+            onOpenHidden: onOpenHidden,
+            onUpdate: onUpdate,
+            onArrange: onArrange,
+            onDiagnostics: onDiagnostics,
+            onSettings: onSettings,
+            onQuit: onQuit,
+            updateAvailable: {
+                switch updater.state {
+                case .available, .restartRequired: return true
+                default: return false
+                }
+            }(),
+            profiles: store.profiles,
+            activeProfileID: store.activeProfile?.id,
+            canUndoProfile: store.undoProfileID != nil,
+            onApplyProfile: onApplyProfile,
+            onUndoProfile: onUndoProfile,
+            automationReason: ruleEngine.activeRuleID == nil
+                ? nil : ruleEngine.activeReason)
     }
 }

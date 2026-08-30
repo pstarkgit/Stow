@@ -14,8 +14,18 @@ final class HideController: ObservableObject {
         case everything
     }
 
+    /// Whether a caller is authorized to synthesize the Command-drag that reorders another app.
+    enum ArrangementIntent: Sendable {
+        case explicitUserAction
+        case background
+
+        nonisolated var allowsPointerControl: Bool { self == .explicitUserAction }
+    }
+
     @Published private(set) var presentation: Presentation = .everything
     @Published private(set) var lastArrangeFailures: [BarArranger.Outcome.Failure] = []
+    @Published private(set) var candidateRevision = 0
+    private var safeRestorePending = false
 
     var isHidden: Bool { presentation != .everything }
 
@@ -86,11 +96,36 @@ final class HideController: ObservableObject {
         return true
     }
 
-    func currentCandidates() -> [ManagedAppCandidate] {
-        Self.candidates(identities: BarItemOwners.cachedIdentitiesList(),
-                        liveClaims: BarItemOwners.lastKnownClaims,
-                        homes: BarHomes.all,
-                        ownBundle: Bundle.main.bundleIdentifier)
+    func currentCandidates(config: Config? = nil) -> [ManagedAppCandidate] {
+        let configured = Set(config?.zoneByBundleID?.keys ?? [:].keys)
+        return Self.candidates(identities: BarItemOwners.cachedIdentitiesList(),
+                               liveClaims: BarItemOwners.lastKnownClaims,
+                               homes: BarHomes.all,
+                               configuredBundleIDs: configured,
+                               ownBundle: Bundle.main.bundleIdentifier)
+    }
+
+    /// Refreshes app discovery and redraws observers without changing menu-bar geometry.
+    ///
+    /// This is the safe app-lifecycle response: discover a newly launched or terminated status
+    /// item, but never invoke `ItemMover`, expand/collapse a boundary, or synthesize mouse input.
+    func refreshCandidatesWithoutMoving() {
+        let refreshed = BarItemOwners.refreshCaches()
+        candidateRevision &+= 1
+        BarArranger.append("candidate refresh identities=\(refreshed.identities.count)"
+                           + " claims=\(refreshed.claims.count) pointerMoves=0")
+    }
+
+    /// Rechecks a launch fallback after a late status-item discovery, without moving anything.
+    ///
+    /// NSWorkspace can announce an app before Control Center has created its menu-bar window.
+    /// The initial launch check therefore may be conservatively inconclusive even though the
+    /// persisted physical order is already correct. A later lifecycle refresh is an opportunity
+    /// to clear that stale fallback and restore hiding, but only when a fresh scan proves every
+    /// identified app is already on the saved side of the boundary.
+    func retryPendingSafeRestore(from config: Config) {
+        guard safeRestorePending else { return }
+        restorePresentationWithoutMoving(from: config)
     }
 
     /// Merges live locations, remembered locations, and pushed-off identities.
@@ -100,6 +135,7 @@ final class HideController: ObservableObject {
     nonisolated static func candidates(identities: [BarItemOwners.Owner],
                                        liveClaims: [BarItemOwners.Owner],
                                        homes: [String: CGFloat],
+                                       configuredBundleIDs: Set<String> = [],
                                        ownBundle: String?) -> [ManagedAppCandidate] {
         var homes = homes.filter {
             !VisibleRowIdentity.cannotBeAddressedIndividually($0.key) && $0.key != ownBundle
@@ -126,11 +162,20 @@ final class HideController: ObservableObject {
         result += stranded.sorted().map {
             ManagedAppCandidate(bundleID: $0, homeX: 0, isPushable: false)
         }
+        let represented = Set(result.map(\.bundleID))
+        let configuredOnly = configuredBundleIDs.filter {
+            !represented.contains($0)
+                && $0 != ownBundle
+                && !VisibleRowIdentity.cannotBeAddressedIndividually($0)
+        }
+        result += configuredOnly.sorted().map {
+            ManagedAppCandidate(bundleID: $0, homeX: 0, isPushable: false)
+        }
         return result.sorted { $0.homeX > $1.homeX }
     }
 
     func hiddenApps(from config: Config) -> [HiddenApp] {
-        currentCandidates().compactMap { candidate in
+        currentCandidates(config: config).compactMap { candidate in
             let zone = config.zone(forBundleID: candidate.bundleID)
             guard zone != .pinned,
                   let running = NSRunningApplication
@@ -176,10 +221,97 @@ final class HideController: ObservableObject {
         return seam.windowNumber
     }
 
-    /// Applies the user's zones as one verified, all-or-nothing app transaction.
+    /// Restores the saved visibility state at launch without synthesizing mouse input.
+    ///
+    /// Physical menu-bar order persists across launches. If it still matches the saved zones,
+    /// expanding the stationary boundary is enough. If it drifted, leave everything visible and
+    /// require an explicit Arrange action instead of taking control of the user's pointer during
+    /// startup.
+    func restorePresentationWithoutMoving(from config: Config) {
+        lastArrangeFailures = []
+        safeRestorePending = false
+        showEverything()
+        guard config.hidesAnything else {
+            BarArranger.append("launch restore=everything pointerMoves=0")
+            return
+        }
+
+        var attempt = 0
+        let arranged = Self.executeSafeRestoreChecks(
+            perform: {
+                attempt += 1
+                // MenuBarExtra and Control Center create their windows asynchronously at login.
+                // Wait for the visible bar count to settle before comparing it with the saved
+                // zones; the old immediate check permanently warned on an already-correct bar.
+                awaitBarToSettle(timeout: Self.safeRestoreSettleTimeout)
+                let claims = BarItemOwners.refreshCache()
+                let seamID = tuckedSeamWindow()
+                let matches = BarArranger.isArranged(
+                    config: config,
+                    seamWindow: { seamID })
+                BarArranger.append("launch restore check attempt=\(attempt)"
+                                   + " claims=\(claims.count)"
+                                   + " seam=\(seamID.map(String.init) ?? "missing")"
+                                   + " arranged=\(matches) pointerMoves=0")
+                return matches
+            },
+            beforeRetry: {
+                RunLoop.current.run(
+                    until: Date().addingTimeInterval(Self.safeRestoreRetryDelay))
+            })
+
+        guard arranged else {
+            var outcome = BarArranger.Outcome()
+            outcome.failed = [.init(
+                bundleID: nil,
+                reason: "the saved layout needs a manual Arrange before it can be hidden safely.",
+                recovery: "Stow left every app visible and did not take control of the pointer.")]
+            lastArrangeFailures = outcome.failed
+            safeRestorePending = true
+            BarArranger.log(outcome, context: "launch restore pointerMoves=0")
+            return
+        }
+        hide()
+        BarArranger.append("launch restore=tidy pointerMoves=0")
+    }
+
+    /// Retries only the read-only launch proof, never the synthetic arranger.
+    ///
+    /// A transient false result is expected while Control Center is still constructing the bar.
+    /// A persistent false result is real drift and must preserve the all-visible safe fallback.
+    static func executeSafeRestoreChecks(
+        perform: () -> Bool,
+        beforeRetry: () -> Void
+    ) -> Bool {
+        for attempt in 1...maximumSafeRestoreAttempts {
+            if perform() { return true }
+            if attempt < maximumSafeRestoreAttempts { beforeRetry() }
+        }
+        return false
+    }
+
+    private static let maximumSafeRestoreAttempts = 2
+    private static let safeRestoreSettleTimeout: TimeInterval = 0.75
+    private static let safeRestoreRetryDelay: TimeInterval = 0.35
+
+    /// Applies the user's zones through bounded, forward-only convergence passes.
     @discardableResult
-    func arrangeByMovingItems(from config: Config) -> BarArranger.Outcome {
+    func arrangeByMovingItems(
+        from config: Config,
+        intent: ArrangementIntent
+    ) -> BarArranger.Outcome {
         let began = Date()
+        guard intent.allowsPointerControl else {
+            var outcome = BarArranger.Outcome()
+            outcome.failed = [.init(
+                bundleID: nil,
+                reason: "a background profile change needs menu-bar movement.",
+                recovery: "Choose that profile manually so Stow never takes the pointer silently.")]
+            outcome.cost = Date().timeIntervalSince(began)
+            lastArrangeFailures = outcome.failed
+            BarArranger.log(outcome, context: "arrange blocked background pointerMoves=0")
+            return outcome
+        }
         prepare()
         let previous = presentation
 
@@ -242,26 +374,33 @@ final class HideController: ObservableObject {
         return outcome
     }
 
-    /// Runs one fresh replacement transaction after an app-specific refusal.
+    /// Runs up to two fresh passes after app-specific refusals.
     ///
     /// Failures without an app identity are environmental or structural (Accessibility, owner
     /// resolution, or the boundary itself). Repeating those cannot help and would only freeze the
-    /// panel for another full arrange budget. A named app failure is the transient shape measured
-    /// in the live log: the first transaction was refused and an immediate fresh transaction
-    /// completed in 0.52 seconds.
+    /// panel for another full arrange budget. Named app failures are transient and can also move
+    /// between apps as a pass makes progress. Three total passes bound the pointer work while
+    /// allowing the fresh scan to operate only on what the preceding pass left unresolved.
     static func executeArrangementWithTransientRetry(
         perform: () -> BarArranger.Outcome,
         beforeRetry: () -> Void
     ) -> BarArranger.Outcome {
-        let first = perform()
-        guard shouldRetryArrangement(first) else { return first }
-        beforeRetry()
-        return perform()
+        var outcome = perform()
+        var attempt = 1
+        while attempt < maximumArrangementAttempts,
+              shouldRetryArrangement(outcome) {
+            beforeRetry()
+            outcome = perform()
+            attempt += 1
+        }
+        return outcome
     }
 
     nonisolated static func shouldRetryArrangement(_ outcome: BarArranger.Outcome) -> Bool {
         !outcome.failed.isEmpty && outcome.failed.allSatisfy { $0.bundleID != nil }
     }
+
+    nonisolated private static let maximumArrangementAttempts = 3
 
     private func failedOutcome(reason: String,
                                began: Date) -> BarArranger.Outcome {
