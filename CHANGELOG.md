@@ -13,6 +13,43 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.35
+
+- Configured background menu helpers such as Backdrop now remain visible in Stow
+  even when their current version exposes no usable Accessibility status-item identity.
+- Launch now waits for Control Center to finish constructing the menu bar and rechecks
+  late app discoveries, preventing an already-correct layout from getting stuck visible.
+- The compact menu-bar panel now observes the same live restore state as the Arrange window,
+  so a cleared launch fallback cannot remain frozen on screen.
+- Installation now signs by a unique certificate fingerprint when Keychain contains
+  renewed Developer ID certificates with the same display name.
+
+## 0.1.34
+
+- Newly launched or closed menu-bar apps now refresh discovery immediately without
+  restarting Stow, rearranging the bar, or taking control of the pointer.
+
+## 0.1.33
+
+- Multi-widget apps now cross Stow's boundary as one ordered group, preventing
+  iStat Menus from rejecting a layout change.
+- Failed arrangement passes keep verified progress and rescan only what remains instead
+  of attempting fragile automatic rollbacks.
+- Launch and automatic rules no longer synthesize mouse drags; Stow only takes pointer
+  control after an explicit Arrange, profile, shortcut, or hidden-app action.
+
+## 0.1.32
+
+- Clicking a hidden app now waits until its menu-bar item is visibly restored before
+  opening its menu, preventing menus such as ACME from appearing at the screen's far-left edge.
+
+## 0.1.31
+
+- The menu-bar popup is wider and keeps up to ten hidden apps visible in one row
+  before switching to horizontal scrolling.
+- Multi-widget apps now move a misplaced item beside one of their existing widgets,
+  preventing saved app ordering from snapping it back across Stow's boundary.
+
 ## 0.1.30
 
 - Rules now explain why a profile is active and keep a bounded activity history of

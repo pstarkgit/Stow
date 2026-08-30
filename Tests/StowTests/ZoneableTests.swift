@@ -132,6 +132,20 @@ private func identity(_ bundle: String, _ axLeftEdge: CGFloat) -> BarItemOwners.
                                                isPushable: false)])
 }
 
+@Test func aConfiguredBackgroundHelperRemainsVisibleWithoutAXIdentityOrHome() {
+    let candidates = HideController.candidates(
+        identities: [],
+        liveClaims: [],
+        homes: [:],
+        configuredBundleIDs: ["com.cindori.Backdrop.Wallpaper"],
+        ownBundle: "dev.starkpat.stow")
+
+    #expect(candidates == [ManagedAppCandidate(
+        bundleID: "com.cindori.Backdrop.Wallpaper",
+        homeX: 0,
+        isPushable: false)])
+}
+
 @Test func aStrandedIdentityReportingTheSentinelIsNotOfferedAsACandidate() {
     // x-1 names "no position", not a push. Offering it would zone an item Stow never
     // actually saw sitting anywhere.

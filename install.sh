@@ -243,7 +243,11 @@ LOCAL_IDENTITY="Stow Dev"
 # SIGPIPE and pipefail reports the pipeline as failed, so a Developer ID that IS
 # present would read as absent and silently drop to ad-hoc.
 IDENTITIES="$(security find-identity -v -p codesigning 2>/dev/null || true)"
-case "$IDENTITIES" in *"$DEVID"*) HAVE_DEVID=1 ;; *) HAVE_DEVID=0 ;; esac
+DEVID_HASH="$(
+    printf '%s\n' "$IDENTITIES" \
+        | awk -v identity="$DEVID" 'index($0, identity) { print $2; exit }'
+)"
+if [ -n "$DEVID_HASH" ]; then HAVE_DEVID=1; else HAVE_DEVID=0; fi
 case "$IDENTITIES" in *"$LOCAL_IDENTITY"*) HAVE_LOCAL=1 ;; *) HAVE_LOCAL=0 ;; esac
 
 if [ "$HAVE_DEVID" -eq 1 ]; then
@@ -256,7 +260,10 @@ if [ "$HAVE_DEVID" -eq 1 ]; then
     else
         SIGN_OPTS+=(--timestamp=none)   # explicit; codesign contacts the server otherwise
     fi
-    codesign "${SIGN_OPTS[@]}" --sign "$DEVID" "$APP"
+    # Keychain can retain an older renewed certificate with the same display name. Signing by
+    # that name is then ambiguous even though both identities are valid. Resolve the first valid
+    # match above and sign by its unique SHA-1 fingerprint.
+    codesign "${SIGN_OPTS[@]}" --sign "$DEVID_HASH" "$APP"
     echo "Signed with Developer ID + Hardened Runtime"
 elif [ "$HAVE_LOCAL" -eq 1 ]; then
     codesign --force --deep --sign "$LOCAL_IDENTITY" "$APP"

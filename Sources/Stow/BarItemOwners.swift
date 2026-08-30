@@ -150,6 +150,25 @@ enum BarItemOwners {
         return fresh
     }
 
+    /// Refreshes the identity and on-bar claim caches from one Accessibility walk.
+    ///
+    /// App lifecycle notifications need both views of the same status items. Calling the two
+    /// public refresh methods separately would repeat the measured ~0.9 second owner walk on the
+    /// main actor. One snapshot keeps the caches coherent and makes refresh-only observation cheap
+    /// enough to run after an app launches without moving any menu-bar item.
+    @discardableResult
+    static func refreshCaches() -> (identities: [Owner], claims: [Owner]) {
+        let fresh = identities()
+        let live = Set(NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy != .prohibited }
+            .map(\.processIdentifier))
+        cachedIdentities = fresh
+        cachedIdentityPIDs = live
+        cached = fresh.filter { $0.axLeftEdge > 0 }
+        cachedPIDs = live
+        return (fresh, cached)
+    }
+
     private static var cachedIdentities: [Owner] = []
     private static var cachedIdentityPIDs: Set<pid_t> = []
 

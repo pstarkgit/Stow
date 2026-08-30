@@ -6,6 +6,8 @@ import AppKit
 /// Hidden apps are the primary content because they are the only bar items a person cannot
 /// already click. Arrangement and maintenance remain one step away in the main window.
 struct StatusPanel: View {
+    nonisolated static let panelWidth: CGFloat = 500
+
 
     @ObservedObject private var revealer = RevealCoordinator.shared
 
@@ -139,7 +141,7 @@ struct StatusPanel: View {
             visibleSection
             actionsSection
         }
-        .frame(width: 340)
+        .frame(width: Self.panelWidth)
         .background(auroraCanvas)
     }
 

@@ -34,10 +34,27 @@ struct HiddenApp: Identifiable, Equatable {
 /// windows at pop-up-menu level going 3 to 4. So a tucked app is reachable without revealing
 /// anything, which is what makes hiding it worth doing.
 ///
-/// Apps stay in one horizontal run, matching the surface they came from. Six fit at the panel's
+/// Apps stay in one horizontal run, matching the surface they came from. Ten fit at the panel's
 /// normal width; larger sets scroll instead of wrapping into a grid. Hover reveals the app name
 /// in the section header without making every icon carry a permanent caption.
 struct SubBar: View {
+    enum ShelfLayout: Equatable {
+        case inline
+        case scrolling
+    }
+
+    /// Chooses the first layout that actually fits rather than keeping a second hardcoded app
+    /// limit beside the panel width. The arithmetic mirrors the rendered shelf: 12pt outer
+    /// padding per side, a 72pt action, 1pt divider, 5pt inner padding per side, 34pt icons,
+    /// and 3pt gaps. At the 500pt panel width ten apps fit and the eleventh scrolls.
+    nonisolated static func shelfLayout(appCount: Int, panelWidth: CGFloat) -> ShelfLayout {
+        let available = panelWidth - 24 - 72 - 1
+        let icons = CGFloat(max(0, appCount)) * 34
+        let gaps = CGFloat(max(0, appCount - 1)) * 3
+        let required = 10 + icons + gaps
+        return required <= available ? .inline : .scrolling
+    }
+
     let apps: [HiddenApp]
     let state: BarState
     let revealPresentation: RevealPresentation?
@@ -64,7 +81,8 @@ struct SubBar: View {
             }
 
             HStack(spacing: 0) {
-                if apps.count <= 6 {
+                if Self.shelfLayout(appCount: apps.count,
+                                    panelWidth: StatusPanel.panelWidth) == .inline {
                     HStack(spacing: 3) {
                         if apps.isEmpty {
                             Text("No hidden apps")

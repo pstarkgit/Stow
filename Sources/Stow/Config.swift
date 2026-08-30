@@ -23,7 +23,7 @@ import Foundation
 /// bundle id names the app, not a window or a process id that dies with it, so it
 /// survives a relaunch and is a legitimate persisted key. `zoneByBundleID` and each
 /// profile's `appZones` below are that key in use. Profiles apply those maps through the
-/// same transactional arranger as the editor; context-aware Rules remain later work.
+/// same forward-only arranger as the editor; context-aware Rules remain later work.
 struct Config: Codable, Equatable, Sendable {
     static let currentSchemaVersion = 1
 

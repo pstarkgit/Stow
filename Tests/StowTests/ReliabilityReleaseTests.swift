@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 import Testing
 @testable import Stow
 
@@ -83,10 +84,69 @@ import Testing
     #expect(script.contains(#"kill -0 "$NEW_PID""#))
 }
 
+@Test func installerResolvesDuplicateDeveloperIDNamesToAUniqueFingerprint() throws {
+    let root = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let script = try String(contentsOf: root.appending(path: "install.sh"),
+                            encoding: .utf8)
+
+    #expect(script.contains(#"DEVID_HASH="$("#))
+    #expect(script.contains(#"--sign "$DEVID_HASH" "$APP""#))
+}
+
 @Test func itemMoverRetriesOnlyBeforeItsThirdAttempt() {
     #expect(ItemMover.shouldRetry(after: 1))
     #expect(ItemMover.shouldRetry(after: 2))
     #expect(!ItemMover.shouldRetry(after: 3))
+}
+
+@Test func multiItemAppMovesBesideItsSiblingOnTheRequestedSide() {
+    let layout: [(windowID: CGWindowID, bundleID: String?)] = [
+        (7311, "eu.exelban.Stats"),
+        (1032, "com.amazon.kiro.crew"),
+        (6683, "com.openai.codex"),
+        (30, "com.apple.KerberosMenuExtra"),
+        (155, "com.microsoft.OneDrive"),
+        (7318, "dev.starkpat.stow"),
+        (7192, "eu.exelban.Stats"),
+        (7190, "eu.exelban.Stats"),
+        (7195, "eu.exelban.Stats"),
+    ]
+
+    #expect(BarArranger.siblingAnchor(bundleID: "eu.exelban.Stats",
+                                      wantsRight: true,
+                                      seamIndex: 5,
+                                      items: layout) == 7192)
+}
+
+@Test func multiItemAppCrossesTheBoundaryNearestFirstAndChainsItsOwnOrder() {
+    let bundleID = "com.bjango.istatmenus.status"
+    let layout: [(windowID: CGWindowID, bundleID: String?)] = [
+        (1095, bundleID),
+        (1096, bundleID),
+        (1094, bundleID),
+        (1092, bundleID),
+        (1091, bundleID),
+        (1093, bundleID),
+        (1133, "dev.starkpat.stow"),
+    ]
+    let moves = layout.prefix(6).map { item in
+        BarArranger.TransactionMove(
+            bundleID: bundleID,
+            windowID: item.windowID,
+            hostPID: 1,
+            wantsRight: true)
+    }
+
+    let planned = BarArranger.movementPlan(
+        moves: moves,
+        seamIndex: 6,
+        items: layout)
+
+    #expect(planned.map(\.windowID) == [1093, 1091, 1092, 1094, 1096, 1095])
+    #expect(planned.map(\.siblingAnchorID) == [nil, 1093, 1091, 1092, 1094, 1096])
 }
 
 @Test func itemMoverDoesNotAcceptOneTransientCorrectFrameAsSettled() {
@@ -143,6 +203,29 @@ import Testing
     #expect(outcome.isClean)
 }
 
+@Test @MainActor func freshArrangementPassesConvergeAcrossTwoDifferentRefusals() {
+    var attempts = 0
+    var resets = 0
+    let outcome = HideController.executeArrangementWithTransientRetry(
+        perform: {
+            attempts += 1
+            if attempts < 3 {
+                var partial = BarArranger.Outcome()
+                partial.moved = [attempts == 1 ? "a" : "b"]
+                partial.failed = [transactionFailure(
+                    attempts == 1 ? "b" : "c",
+                    "move refused")]
+                return partial
+            }
+            return BarArranger.Outcome()
+        },
+        beforeRetry: { resets += 1 })
+
+    #expect(attempts == 3)
+    #expect(resets == 2)
+    #expect(outcome.isClean)
+}
+
 @Test @MainActor func anEnvironmentalArrangeFailureIsNotRepeated() {
     var attempts = 0
     var resets = 0
@@ -160,6 +243,87 @@ import Testing
     #expect(!outcome.isClean)
 }
 
+@Test func backgroundArrangementNeverGetsPointerAuthority() {
+    #expect(HideController.ArrangementIntent.explicitUserAction.allowsPointerControl)
+    #expect(!HideController.ArrangementIntent.background.allowsPointerControl)
+}
+
+@Test func launchRestoresPresentationWithoutCallingTheSyntheticArranger() throws {
+    let root = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let source = try String(contentsOf: root.appending(path: "Sources/Stow/App.swift"),
+                            encoding: .utf8)
+    let launchStart = try #require(source.range(of: "Image(nsImage: StowGlyph.image"))
+    let launchEnd = try #require(source.range(of: "// Quiet check at launch",
+                                               range: launchStart.lowerBound..<source.endIndex))
+    let launchPath = source[launchStart.lowerBound..<launchEnd.lowerBound]
+
+    #expect(launchPath.contains("restorePresentationWithoutMoving"))
+    #expect(!launchPath.contains("arrangeByMovingItems"))
+}
+
+@Test @MainActor func launchRestoreClearsATransientFalseNegativeWithoutMovingAnything() {
+    var attempts = 0
+    var waits = 0
+    let restored = HideController.executeSafeRestoreChecks(
+        perform: {
+            attempts += 1
+            return attempts == 2
+        },
+        beforeRetry: { waits += 1 })
+
+    #expect(restored)
+    #expect(attempts == 2)
+    #expect(waits == 1)
+}
+
+@Test @MainActor func launchRestorePreservesTheFallbackForPersistentPhysicalDrift() {
+    var attempts = 0
+    var waits = 0
+    let restored = HideController.executeSafeRestoreChecks(
+        perform: {
+            attempts += 1
+            return false
+        },
+        beforeRetry: { waits += 1 })
+
+    #expect(!restored)
+    #expect(attempts == 2)
+    #expect(waits == 1)
+}
+
+@Test func appLifecycleRefreshesDiscoveryWithoutRearrangingTheMenuBar() throws {
+    let root = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let source = try String(contentsOf: root.appending(path: "Sources/Stow/App.swift"),
+                            encoding: .utf8)
+
+    #expect(source.contains("NSWorkspace.didLaunchApplicationNotification"))
+    #expect(source.contains("NSWorkspace.didTerminateApplicationNotification"))
+    #expect(source.contains("hider.refreshCandidatesWithoutMoving()"))
+    #expect(source.contains("hider.retryPendingSafeRestore(from: store.config)"))
+    #expect(!source.contains("refreshCandidatesWithoutMoving().arrangeByMovingItems"))
+}
+
+@Test func compactPanelObservesTheLiveControllerInsteadOfCapturingLaunchScalars() throws {
+    let root = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let source = try String(contentsOf: root.appending(path: "Sources/Stow/App.swift"),
+                            encoding: .utf8)
+
+    #expect(source.contains("private struct LiveStatusPanel: View"))
+    #expect(source.contains("@EnvironmentObject private var hider: HideController"))
+    #expect(source.contains("arrangementFailures: hider.lastArrangeFailures"))
+    #expect(source.contains("presentation: hider.presentation"))
+    #expect(source.contains(".environmentObject(hider)"))
+}
+
 private func transactionMove(_ bundleID: String, window: UInt32) -> BarArranger.TransactionMove {
     BarArranger.TransactionMove(
         bundleID: bundleID,
@@ -173,12 +337,12 @@ private func transactionFailure(_ bundleID: String?, _ reason: String)
     .init(bundleID: bundleID, reason: reason, recovery: "Recover.")
 }
 
-@Test @MainActor func aSuccessfulTransactionMovesEverythingAndVerifiesOnce() {
+@Test @MainActor func aSuccessfulPassMovesEverythingAndVerifiesOnce() {
     var events: [String] = []
-    let outcome = BarArranger.executeTransaction(
+    let outcome = BarArranger.executePass(
         moves: [transactionMove("a", window: 1), transactionMove("b", window: 2)],
-        perform: { move, _, phase in
-            events.append("\(phase)-\(move.bundleID)")
+        perform: { move, _ in
+            events.append("apply-\(move.bundleID)")
             return nil
         },
         verify: {
@@ -188,17 +352,16 @@ private func transactionFailure(_ bundleID: String?, _ reason: String)
 
     #expect(outcome.moved == ["a", "b"])
     #expect(outcome.failed.isEmpty)
-    #expect(!outcome.rolledBack)
     #expect(events == ["apply-a", "apply-b", "verify"])
 }
 
-@Test @MainActor func aPartialMoveFailureRollsBackCompletedMovesInReverse() {
+@Test @MainActor func aPartialMoveFailureKeepsVerifiedProgressForTheFreshRetry() {
     var events: [String] = []
-    let outcome = BarArranger.executeTransaction(
+    let outcome = BarArranger.executePass(
         moves: [transactionMove("a", window: 1), transactionMove("b", window: 2)],
-        perform: { move, _, phase in
-            events.append("\(phase)-\(move.bundleID)")
-            if phase == .apply, move.bundleID == "b" {
+        perform: { move, _ in
+            events.append("apply-\(move.bundleID)")
+            if move.bundleID == "b" {
                 return transactionFailure("b", "move refused")
             }
             return nil
@@ -208,18 +371,17 @@ private func transactionFailure(_ bundleID: String?, _ reason: String)
             return []
         })
 
-    #expect(outcome.moved.isEmpty)
+    #expect(outcome.moved == ["a"])
     #expect(outcome.failed.first?.bundleID == "b")
-    #expect(outcome.rolledBack)
-    #expect(events == ["apply-a", "apply-b", "rollback-a"])
+    #expect(events == ["apply-a", "apply-b"])
 }
 
-@Test @MainActor func verificationFailureRollsBackEveryMoveInReverse() {
+@Test @MainActor func verificationFailureKeepsCompletedMovesForTheFreshRetry() {
     var events: [String] = []
-    let outcome = BarArranger.executeTransaction(
+    let outcome = BarArranger.executePass(
         moves: [transactionMove("a", window: 1), transactionMove("b", window: 2)],
-        perform: { move, _, phase in
-            events.append("\(phase)-\(move.bundleID)")
+        perform: { move, _ in
+            events.append("apply-\(move.bundleID)")
             return nil
         },
         verify: {
@@ -227,33 +389,16 @@ private func transactionFailure(_ bundleID: String?, _ reason: String)
             return [transactionFailure("b", "window disappeared")]
         })
 
-    #expect(outcome.moved.isEmpty)
-    #expect(outcome.rolledBack)
-    #expect(events == ["apply-a", "apply-b", "verify", "rollback-b", "rollback-a"])
-}
-
-@Test @MainActor func rollbackFailureIsReportedWithoutClaimingSuccess() {
-    let outcome = BarArranger.executeTransaction(
-        moves: [transactionMove("a", window: 1)],
-        perform: { move, _, phase in
-            if phase == .rollback {
-                return transactionFailure(move.bundleID, "rollback refused")
-            }
-            return nil
-        },
-        verify: { [transactionFailure("a", "wrong side")] })
-
-    #expect(outcome.moved.isEmpty)
-    #expect(outcome.failed.map(\.reason) == ["wrong side", "rollback refused"])
-    #expect(outcome.rolledBack)
+    #expect(outcome.moved == ["a", "b"])
+    #expect(events == ["apply-a", "apply-b", "verify"])
 }
 
 @Test @MainActor func preflightFailureMakesNoMoveAndDoesNotVerify() {
     var touched = false
-    let outcome = BarArranger.executeTransaction(
+    let outcome = BarArranger.executePass(
         moves: [transactionMove("a", window: 1)],
         initialFailures: [transactionFailure(nil, "unknown hidden item")],
-        perform: { _, _, _ in
+        perform: { _, _ in
             touched = true
             return nil
         },
@@ -264,7 +409,6 @@ private func transactionFailure(_ bundleID: String?, _ reason: String)
 
     #expect(!touched)
     #expect(outcome.failed.count == 1)
-    #expect(!outcome.rolledBack)
 }
 
 @Test func loadingLegacyZonesRewritesTheFileAndPreservesUnknownFields() throws {
