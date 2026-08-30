@@ -13,16 +13,19 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
-## 0.1.35
+## 0.1.36
 
-- Configured background menu helpers such as Backdrop now remain visible in Stow
-  even when their current version exposes no usable Accessibility status-item identity.
 - Launch now waits for Control Center to finish constructing the menu bar and rechecks
   late app discoveries, preventing an already-correct layout from getting stuck visible.
 - The compact menu-bar panel now observes the same live restore state as the Arrange window,
   so a cleared launch fallback cannot remain frozen on screen.
 - Installation now signs by a unique certificate fingerprint when Keychain contains
   renewed Developer ID certificates with the same display name.
+
+## 0.1.35
+
+- Configured background menu helpers such as Backdrop now remain visible in Stow
+  even when their current version exposes no usable Accessibility status-item identity.
 
 ## 0.1.34
 

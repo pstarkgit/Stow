@@ -175,6 +175,32 @@ import CoreGraphics
             "CHANGELOG head is \(head ?? "none"), version is \(StowVersion.current)")
 }
 
+@Test func changelogReleasesAdvanceExactlyOnePatchAtATime() throws {
+    let root = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let text = try String(contentsOf: root.appending(path: "CHANGELOG.md"),
+                          encoding: .utf8)
+    var inFence = false
+    var releases: [[Int]] = []
+    for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
+        let line = String(raw)
+        if line.hasPrefix("```") { inFence.toggle(); continue }
+        if inFence || !line.hasPrefix("## ") { continue }
+        let parts = line.dropFirst(3).split(separator: ".").compactMap { Int($0) }
+        if parts.count == 3 { releases.append(parts) }
+        if releases.count == 2 { break }
+    }
+
+    let newest = try #require(releases.first)
+    let previous = try #require(releases.dropFirst().first)
+    #expect(newest[0] == previous[0])
+    #expect(newest[1] == previous[1])
+    #expect(newest[2] == previous[2] + 1,
+            "Release \(newest) must be exactly one patch after \(previous)")
+}
+
 @Test func firstStowLaunchImportsLegacyAirlockConfigWithoutChangingIt() throws {
     let root = FileManager.default.temporaryDirectory
         .appending(path: "stow-config-migration-\(UUID().uuidString)", directoryHint: .isDirectory)
