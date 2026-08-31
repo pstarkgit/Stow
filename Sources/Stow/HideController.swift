@@ -17,15 +17,17 @@ final class HideController: ObservableObject {
     /// Whether a caller is authorized to synthesize the Command-drag that reorders another app.
     enum ArrangementIntent: Sendable {
         case explicitUserAction
+        case savedLayoutRepair
         case background
 
-        nonisolated var allowsPointerControl: Bool { self == .explicitUserAction }
+        nonisolated var allowsPointerControl: Bool {
+            self == .explicitUserAction || self == .savedLayoutRepair
+        }
     }
 
     @Published private(set) var presentation: Presentation = .everything
     @Published private(set) var lastArrangeFailures: [BarArranger.Outcome.Failure] = []
     @Published private(set) var candidateRevision = 0
-    private var safeRestorePending = false
 
     var isHidden: Bool { presentation != .everything }
 
@@ -107,25 +109,13 @@ final class HideController: ObservableObject {
 
     /// Refreshes app discovery and redraws observers without changing menu-bar geometry.
     ///
-    /// This is the safe app-lifecycle response: discover a newly launched or terminated status
-    /// item, but never invoke `ItemMover`, expand/collapse a boundary, or synthesize mouse input.
+    /// Discovery is kept separate from reconciliation so callers can redraw observers before
+    /// deciding whether the already-selected saved layout needs repair.
     func refreshCandidatesWithoutMoving() {
         let refreshed = BarItemOwners.refreshCaches()
         candidateRevision &+= 1
         BarArranger.append("candidate refresh identities=\(refreshed.identities.count)"
                            + " claims=\(refreshed.claims.count) pointerMoves=0")
-    }
-
-    /// Rechecks a launch fallback after a late status-item discovery, without moving anything.
-    ///
-    /// NSWorkspace can announce an app before Control Center has created its menu-bar window.
-    /// The initial launch check therefore may be conservatively inconclusive even though the
-    /// persisted physical order is already correct. A later lifecycle refresh is an opportunity
-    /// to clear that stale fallback and restore hiding, but only when a fresh scan proves every
-    /// identified app is already on the saved side of the boundary.
-    func retryPendingSafeRestore(from config: Config) {
-        guard safeRestorePending else { return }
-        restorePresentationWithoutMoving(from: config)
     }
 
     /// Merges live locations, remembered locations, and pushed-off identities.
@@ -221,15 +211,17 @@ final class HideController: ObservableObject {
         return seam.windowNumber
     }
 
-    /// Restores the saved visibility state at launch without synthesizing mouse input.
+    /// Restores the saved visibility state at launch.
     ///
-    /// Physical menu-bar order persists across launches. If it still matches the saved zones,
-    /// expanding the stationary boundary is enough. If it drifted, leave everything visible and
-    /// require an explicit Arrange action instead of taking control of the user's pointer during
-    /// startup.
-    func restorePresentationWithoutMoving(from config: Config) {
+    /// The common path remains read-only: if macOS recreated the boundary in the same place,
+    /// expanding it is enough. In practice, removing Stow's status item during an update or
+    /// relaunch lets Control Center collapse the tucked group, then recreates the boundary inside
+    /// that group. The old policy treated that deterministic launch behavior as user drift and
+    /// left every app visible forever. When the read-only proof fails, repair the saved grouping
+    /// with the same bounded mover as explicit Arrange. ItemMover hides and restores the cursor,
+    /// refuses real gestures/modifiers, and this path still fails open if macOS rejects a move.
+    func restoreSavedLayout(from config: Config) {
         lastArrangeFailures = []
-        safeRestorePending = false
         showEverything()
         guard config.hidesAnything else {
             BarArranger.append("launch restore=everything pointerMoves=0")
@@ -260,25 +252,47 @@ final class HideController: ObservableObject {
                     until: Date().addingTimeInterval(Self.safeRestoreRetryDelay))
             })
 
-        guard arranged else {
-            var outcome = BarArranger.Outcome()
-            outcome.failed = [.init(
-                bundleID: nil,
-                reason: "the saved layout needs a manual Arrange before it can be hidden safely.",
-                recovery: "Stow left every app visible and did not take control of the pointer.")]
-            lastArrangeFailures = outcome.failed
-            safeRestorePending = true
-            BarArranger.log(outcome, context: "launch restore pointerMoves=0")
+        guard !arranged else {
+            hide()
+            BarArranger.append("launch restore=tidy pointerMoves=0")
             return
         }
-        hide()
-        BarArranger.append("launch restore=tidy pointerMoves=0")
+
+        BarArranger.append("launch restore repair=required")
+        let outcome = arrangeByMovingItems(from: config, intent: .savedLayoutRepair)
+        BarArranger.log(outcome, context: "launch restore repair")
     }
 
-    /// Retries only the read-only launch proof, never the synthetic arranger.
+    /// Reconciles a configured app that creates or removes its menu-bar item after launch.
+    ///
+    /// This is intentionally narrower than a background profile change: it reapplies the layout
+    /// the user already selected, and only when the live order no longer matches that layout.
+    /// Unchanged lifecycle notifications stay on the read-only path and move nothing.
+    func reconcileSavedLayoutAfterCandidateChange(from config: Config) {
+        guard config.hidesAnything else {
+            lastArrangeFailures = []
+            showEverything()
+            return
+        }
+
+        awaitBarToSettle(timeout: Self.safeRestoreSettleTimeout)
+        _ = BarItemOwners.refreshCache()
+        let seamID = tuckedSeamWindow()
+        if BarArranger.isArranged(config: config, seamWindow: { seamID }) {
+            lastArrangeFailures = []
+            if presentation == .everything { hide() }
+            BarArranger.append("lifecycle reconcile=already-correct pointerMoves=0")
+            return
+        }
+
+        let outcome = arrangeByMovingItems(from: config, intent: .savedLayoutRepair)
+        BarArranger.log(outcome, context: "lifecycle reconcile")
+    }
+
+    /// Retries the read-only launch proof before escalating to the bounded saved-layout repair.
     ///
     /// A transient false result is expected while Control Center is still constructing the bar.
-    /// A persistent false result is real drift and must preserve the all-visible safe fallback.
+    /// A persistent false result means the caller must reconcile the saved grouping.
     static func executeSafeRestoreChecks(
         perform: () -> Bool,
         beforeRetry: () -> Void

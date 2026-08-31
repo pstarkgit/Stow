@@ -245,10 +245,11 @@ import Testing
 
 @Test func backgroundArrangementNeverGetsPointerAuthority() {
     #expect(HideController.ArrangementIntent.explicitUserAction.allowsPointerControl)
+    #expect(HideController.ArrangementIntent.savedLayoutRepair.allowsPointerControl)
     #expect(!HideController.ArrangementIntent.background.allowsPointerControl)
 }
 
-@Test func launchRestoresPresentationWithoutCallingTheSyntheticArranger() throws {
+@Test func launchRepairsSavedLayoutWhenTheReadOnlyProofFails() throws {
     let root = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
         .deletingLastPathComponent()
@@ -260,8 +261,7 @@ import Testing
                                                range: launchStart.lowerBound..<source.endIndex))
     let launchPath = source[launchStart.lowerBound..<launchEnd.lowerBound]
 
-    #expect(launchPath.contains("restorePresentationWithoutMoving"))
-    #expect(!launchPath.contains("arrangeByMovingItems"))
+    #expect(launchPath.contains("restoreSavedLayout"))
 }
 
 @Test @MainActor func launchRestoreClearsATransientFalseNegativeWithoutMovingAnything() {
@@ -279,7 +279,7 @@ import Testing
     #expect(waits == 1)
 }
 
-@Test @MainActor func launchRestorePreservesTheFallbackForPersistentPhysicalDrift() {
+@Test @MainActor func launchRestoreEscalatesAfterPersistentPhysicalDrift() {
     var attempts = 0
     var waits = 0
     let restored = HideController.executeSafeRestoreChecks(
@@ -294,7 +294,7 @@ import Testing
     #expect(waits == 1)
 }
 
-@Test func appLifecycleRefreshesDiscoveryWithoutRearrangingTheMenuBar() throws {
+@Test func appLifecycleReconcilesLateMenuItemsAgainstTheSavedLayout() throws {
     let root = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
         .deletingLastPathComponent()
@@ -305,8 +305,8 @@ import Testing
     #expect(source.contains("NSWorkspace.didLaunchApplicationNotification"))
     #expect(source.contains("NSWorkspace.didTerminateApplicationNotification"))
     #expect(source.contains("hider.refreshCandidatesWithoutMoving()"))
-    #expect(source.contains("hider.retryPendingSafeRestore(from: store.config)"))
-    #expect(!source.contains("refreshCandidatesWithoutMoving().arrangeByMovingItems"))
+    #expect(source.contains("hider.reconcileSavedLayoutAfterCandidateChange(from: store.config)"))
+    #expect(source.contains("for delay in [500, 1_000]"))
 }
 
 @Test func compactPanelObservesTheLiveControllerInsteadOfCapturingLaunchScalars() throws {

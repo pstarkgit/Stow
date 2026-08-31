@@ -13,6 +13,11 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.37
+
+- Saved layouts now repair themselves after Stow relaunches or configured menu-bar apps
+  appear late, while preserving gesture guards, bounded retries, and fail-open recovery.
+
 ## 0.1.36
 
 - Launch now waits for Control Center to finish constructing the menu bar and rechecks
