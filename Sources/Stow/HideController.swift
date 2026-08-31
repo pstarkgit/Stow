@@ -289,6 +289,21 @@ final class HideController: ObservableObject {
         BarArranger.log(outcome, context: "lifecycle reconcile")
     }
 
+    /// Reports pinned apps whose own tray item is unavailable, without blaming Stow's boundary.
+    func pinnedAvailabilityFailures(from config: Config) -> [BarArranger.Outcome.Failure] {
+        let unavailable = BarArranger.unavailablePinnedSentinels(
+            config: config,
+            identities: BarItemOwners.lastKnownIdentities,
+            windows: ItemMover.positionableItems(),
+            excluding: seamWindowNumbers())
+        return unavailable.map { bundleID in
+            .init(
+                bundleID: bundleID,
+                reason: "its menu-bar item is unavailable even while Stow is fully revealed.",
+                recovery: "Reopen that app so macOS recreates its menu-bar item.")
+        }
+    }
+
     /// Retries the read-only launch proof before escalating to the bounded saved-layout repair.
     ///
     /// A transient false result is expected while Control Center is still constructing the bar.

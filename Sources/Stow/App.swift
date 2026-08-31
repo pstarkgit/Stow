@@ -446,7 +446,8 @@ private struct LiveStatusPanel: View {
             // Hidden apps come from persisted zones because pushed-off items are absent from the
             // visible scan by definition.
             hiddenApps: hider.hiddenApps(from: store.config),
-            arrangementFailures: hider.lastArrangeFailures,
+            arrangementFailures: hider.lastArrangeFailures
+                + hider.pinnedAvailabilityFailures(from: store.config),
             onTuckAllButPinned: onTuckAllButPinned,
             presentation: hider.presentation,
             onOpenHidden: onOpenHidden,

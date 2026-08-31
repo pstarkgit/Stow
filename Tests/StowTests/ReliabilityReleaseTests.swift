@@ -309,6 +309,87 @@ import Testing
     #expect(source.contains("for delay in [500, 1_000]"))
 }
 
+@Test @MainActor func pinnedSentinelWithoutAWindowIsReportedUnavailable() {
+    var config = Config.default
+    config.setZone(.pinned, forBundleID: "com.amazon.kiro.crew")
+    let kiro = BarItemOwners.Owner(name: "Kiro Crew",
+                                   bundleID: "com.amazon.kiro.crew",
+                                   pid: 70276,
+                                   axLeftEdge: -1)
+
+    #expect(BarArranger.unavailablePinnedSentinels(
+        config: config,
+        identities: [kiro],
+        windows: []) == ["com.amazon.kiro.crew"])
+}
+
+@Test @MainActor func tuckedSentinelIsNotMisreportedAsAPinnedAvailabilityFailure() {
+    var config = Config.default
+    config.setZone(.tucked, forBundleID: "com.amazon.ACME")
+    let acme = BarItemOwners.Owner(name: "ACME",
+                                   bundleID: "com.amazon.ACME",
+                                   pid: 4050,
+                                   axLeftEdge: -1)
+
+    #expect(BarArranger.unavailablePinnedSentinels(
+        config: config,
+        identities: [acme],
+        windows: []).isEmpty)
+}
+
+@Test @MainActor func unconfiguredSentinelIsNotMisreportedAsAPinnedAvailabilityFailure() {
+    let helper = BarItemOwners.Owner(name: "DisplayLink Manager",
+                                     bundleID: "com.displaylink.DisplayLinkUserAgent",
+                                     pid: 90210,
+                                     axLeftEdge: -1)
+
+    #expect(BarArranger.unavailablePinnedSentinels(
+        config: Config.default,
+        identities: [helper],
+        windows: []).isEmpty)
+}
+
+@Test @MainActor func pinnedSentinelWithAnUnclaimedWindowStaysUncertainRatherThanMisdiagnosed() {
+    var config = Config.default
+    config.setZone(.pinned, forBundleID: "com.amazon.kiro.crew")
+    let kiro = BarItemOwners.Owner(name: "Kiro Crew",
+                                   bundleID: "com.amazon.kiro.crew",
+                                   pid: 70276,
+                                   axLeftEdge: -1)
+    let window = ObservedItem(windowNumber: 81,
+                              ownerPID: 1,
+                              bundleID: nil,
+                              ownerName: "Control Center",
+                              frame: CGRect(x: 1_800, y: 0, width: 36, height: 30),
+                              isOnScreen: true)
+
+    #expect(BarArranger.unavailablePinnedSentinels(
+        config: config,
+        identities: [kiro],
+        windows: [window]).isEmpty)
+}
+
+@Test @MainActor func stowsExcludedBoundaryDoesNotHideAPinnedSentinelFailure() {
+    var config = Config.default
+    config.setZone(.pinned, forBundleID: "com.amazon.kiro.crew")
+    let kiro = BarItemOwners.Owner(name: "Kiro Crew",
+                                   bundleID: "com.amazon.kiro.crew",
+                                   pid: 70276,
+                                   axLeftEdge: -1)
+    let seam = ObservedItem(windowNumber: 82,
+                            ownerPID: 1,
+                            bundleID: nil,
+                            ownerName: "Control Center",
+                            frame: CGRect(x: 1_900, y: 0, width: 17, height: 30),
+                            isOnScreen: true)
+
+    #expect(BarArranger.unavailablePinnedSentinels(
+        config: config,
+        identities: [kiro],
+        windows: [seam],
+        excluding: [82]) == ["com.amazon.kiro.crew"])
+}
+
 @Test func compactPanelObservesTheLiveControllerInsteadOfCapturingLaunchScalars() throws {
     let root = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()

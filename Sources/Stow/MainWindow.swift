@@ -533,13 +533,15 @@ private struct ArrangeContentView: View {
                     })
             }
 
-            if !hider.lastArrangeFailures.isEmpty {
+            let failures = hider.lastArrangeFailures
+                + hider.pinnedAvailabilityFailures(from: store.config)
+            if !failures.isEmpty {
                 consequenceBanner(
-                    count: hider.lastArrangeFailures.count,
-                    headline: hider.lastArrangeFailures.count == 1
+                    count: failures.count,
+                    headline: failures.count == 1
                         ? "1 app could not be moved"
-                        : "\(hider.lastArrangeFailures.count) apps could not be moved",
-                    detail: hider.lastArrangeFailures.map {
+                        : "\(failures.count) apps could not be moved",
+                    detail: failures.map {
                         $0.userMessage(displayName: Self.displayName(forBundleID:))
                     }.joined(separator: "\n"))
             }
@@ -687,11 +689,17 @@ private struct ArrangeContentView: View {
                     .font(.system(size: 10.5))
                     .foregroundStyle(StowTheme.inkSoft)
             } else {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(StowTheme.stops(for: .tidy).first ?? StowTheme.blue)
-                Text(nothingHidden
-                     ? "Drag an app into In Stow to begin."
-                     : "Arrangement saved automatically")
+                let unavailable = hider.pinnedAvailabilityFailures(from: store.config)
+                Image(systemName: unavailable.isEmpty
+                      ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(unavailable.isEmpty
+                                     ? (StowTheme.stops(for: .tidy).first ?? StowTheme.blue)
+                                     : StowTheme.orange)
+                Text(unavailable.isEmpty
+                     ? (nothingHidden
+                        ? "Drag an app into In Stow to begin."
+                        : "Arrangement saved automatically")
+                     : "A pinned app needs to recreate its menu-bar item")
                     .font(.system(size: 10.5))
                     .foregroundStyle(StowTheme.inkSoft)
             }

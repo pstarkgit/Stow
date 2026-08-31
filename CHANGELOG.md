@@ -17,6 +17,8 @@ Format:
 
 - Saved layouts now repair themselves after Stow relaunches or configured menu-bar apps
   appear late, while preserving gesture guards, bounded retries, and fail-open recovery.
+- Pinned apps whose own tray item disappears now surface a truthful reopen-app recovery
+  instead of being shown as healthy or incorrectly attributed to Stow's hidden group.
 
 ## 0.1.36
 
