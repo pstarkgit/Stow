@@ -242,7 +242,7 @@ struct StowApp: App {
                     // Legacy Deep Storage assignments resolve to In Stow. Always use the
                     // stationary one-hatch arranger; the old two-hatch path could sweep apps
                     // the user never selected.
-                    hider.restorePresentationWithoutMoving(from: store.config)
+                    hider.restoreSavedLayout(from: store.config)
                     remeasure()
                     ruleEngine.start(
                         rules: { store.rules },
@@ -265,32 +265,19 @@ struct StowApp: App {
                         await updater.check(quiet: true)
                     }
                 }
-                // REFRESH-ONLY lifecycle observers. They update discovery and redraw the shelf;
-                // they never arrange, reveal, hide, or synthesize input.
-                //
-                // Stow used to re-arrange on every application launch and termination. That is
-                // what made the bar look like it was constantly fighting for position: an
-                // arrange REVEALS the whole bar, moves items, then hides it again, so every
-                // unrelated app starting anywhere on the system produced two visible reflows.
-                //
-                // Ice, which this mechanism is ported from, has no such observer: a grep for
-                // items. The distinction here is the whole safety boundary: observe membership,
-                // never enforce it in response to somebody else's app lifecycle.
-                //
-                // Stow keeps per-app zones, because "set this app to Tucked" is the promise it
-                // makes and a purely spatial model cannot express it. But enforcement belongs at
-                // the moment the user expresses intent, not on a timer and not on somebody
-                // else's app launching.
-                //
-                // Delay one beat because NSWorkspace announces launch before some apps finish
-                // creating AXExtrasMenuBar. The refresh walks once after that item can exist.
+                // Reconcile the already-selected layout after app lifecycle changes. Two bounded
+                // passes catch menu items created after NSWorkspace's process notification. Each
+                // pass first proves the layout is already correct and moves nothing in that common
+                // case; only real saved-layout drift invokes the cursor-restoring arranger.
                 .onReceive(NSWorkspace.shared.notificationCenter.publisher(
                     for: NSWorkspace.didLaunchApplicationNotification)) { _ in
                         Task { @MainActor in
-                            try? await Task.sleep(for: .milliseconds(500))
-                            hider.refreshCandidatesWithoutMoving()
-                            hider.retryPendingSafeRestore(from: store.config)
-                            remeasure()
+                            for delay in [500, 1_000] {
+                                try? await Task.sleep(for: .milliseconds(delay))
+                                hider.refreshCandidatesWithoutMoving()
+                                hider.reconcileSavedLayoutAfterCandidateChange(from: store.config)
+                                remeasure()
+                            }
                         }
                     }
                 .onReceive(NSWorkspace.shared.notificationCenter.publisher(
@@ -298,7 +285,7 @@ struct StowApp: App {
                         Task { @MainActor in
                             try? await Task.sleep(for: .milliseconds(500))
                             hider.refreshCandidatesWithoutMoving()
-                            hider.retryPendingSafeRestore(from: store.config)
+                            hider.reconcileSavedLayoutAfterCandidateChange(from: store.config)
                             remeasure()
                         }
                     }
@@ -459,7 +446,8 @@ private struct LiveStatusPanel: View {
             // Hidden apps come from persisted zones because pushed-off items are absent from the
             // visible scan by definition.
             hiddenApps: hider.hiddenApps(from: store.config),
-            arrangementFailures: hider.lastArrangeFailures,
+            arrangementFailures: hider.lastArrangeFailures
+                + hider.pinnedAvailabilityFailures(from: store.config),
             onTuckAllButPinned: onTuckAllButPinned,
             presentation: hider.presentation,
             onOpenHidden: onOpenHidden,

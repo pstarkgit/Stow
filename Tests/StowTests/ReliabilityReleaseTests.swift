@@ -245,10 +245,11 @@ import Testing
 
 @Test func backgroundArrangementNeverGetsPointerAuthority() {
     #expect(HideController.ArrangementIntent.explicitUserAction.allowsPointerControl)
+    #expect(HideController.ArrangementIntent.savedLayoutRepair.allowsPointerControl)
     #expect(!HideController.ArrangementIntent.background.allowsPointerControl)
 }
 
-@Test func launchRestoresPresentationWithoutCallingTheSyntheticArranger() throws {
+@Test func launchRepairsSavedLayoutWhenTheReadOnlyProofFails() throws {
     let root = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
         .deletingLastPathComponent()
@@ -260,8 +261,7 @@ import Testing
                                                range: launchStart.lowerBound..<source.endIndex))
     let launchPath = source[launchStart.lowerBound..<launchEnd.lowerBound]
 
-    #expect(launchPath.contains("restorePresentationWithoutMoving"))
-    #expect(!launchPath.contains("arrangeByMovingItems"))
+    #expect(launchPath.contains("restoreSavedLayout"))
 }
 
 @Test @MainActor func launchRestoreClearsATransientFalseNegativeWithoutMovingAnything() {
@@ -279,7 +279,7 @@ import Testing
     #expect(waits == 1)
 }
 
-@Test @MainActor func launchRestorePreservesTheFallbackForPersistentPhysicalDrift() {
+@Test @MainActor func launchRestoreEscalatesAfterPersistentPhysicalDrift() {
     var attempts = 0
     var waits = 0
     let restored = HideController.executeSafeRestoreChecks(
@@ -294,7 +294,7 @@ import Testing
     #expect(waits == 1)
 }
 
-@Test func appLifecycleRefreshesDiscoveryWithoutRearrangingTheMenuBar() throws {
+@Test func appLifecycleReconcilesLateMenuItemsAgainstTheSavedLayout() throws {
     let root = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
         .deletingLastPathComponent()
@@ -305,8 +305,89 @@ import Testing
     #expect(source.contains("NSWorkspace.didLaunchApplicationNotification"))
     #expect(source.contains("NSWorkspace.didTerminateApplicationNotification"))
     #expect(source.contains("hider.refreshCandidatesWithoutMoving()"))
-    #expect(source.contains("hider.retryPendingSafeRestore(from: store.config)"))
-    #expect(!source.contains("refreshCandidatesWithoutMoving().arrangeByMovingItems"))
+    #expect(source.contains("hider.reconcileSavedLayoutAfterCandidateChange(from: store.config)"))
+    #expect(source.contains("for delay in [500, 1_000]"))
+}
+
+@Test @MainActor func pinnedSentinelWithoutAWindowIsReportedUnavailable() {
+    var config = Config.default
+    config.setZone(.pinned, forBundleID: "com.amazon.kiro.crew")
+    let kiro = BarItemOwners.Owner(name: "Kiro Crew",
+                                   bundleID: "com.amazon.kiro.crew",
+                                   pid: 70276,
+                                   axLeftEdge: -1)
+
+    #expect(BarArranger.unavailablePinnedSentinels(
+        config: config,
+        identities: [kiro],
+        windows: []) == ["com.amazon.kiro.crew"])
+}
+
+@Test @MainActor func tuckedSentinelIsNotMisreportedAsAPinnedAvailabilityFailure() {
+    var config = Config.default
+    config.setZone(.tucked, forBundleID: "com.amazon.ACME")
+    let acme = BarItemOwners.Owner(name: "ACME",
+                                   bundleID: "com.amazon.ACME",
+                                   pid: 4050,
+                                   axLeftEdge: -1)
+
+    #expect(BarArranger.unavailablePinnedSentinels(
+        config: config,
+        identities: [acme],
+        windows: []).isEmpty)
+}
+
+@Test @MainActor func unconfiguredSentinelIsNotMisreportedAsAPinnedAvailabilityFailure() {
+    let helper = BarItemOwners.Owner(name: "DisplayLink Manager",
+                                     bundleID: "com.displaylink.DisplayLinkUserAgent",
+                                     pid: 90210,
+                                     axLeftEdge: -1)
+
+    #expect(BarArranger.unavailablePinnedSentinels(
+        config: Config.default,
+        identities: [helper],
+        windows: []).isEmpty)
+}
+
+@Test @MainActor func pinnedSentinelWithAnUnclaimedWindowStaysUncertainRatherThanMisdiagnosed() {
+    var config = Config.default
+    config.setZone(.pinned, forBundleID: "com.amazon.kiro.crew")
+    let kiro = BarItemOwners.Owner(name: "Kiro Crew",
+                                   bundleID: "com.amazon.kiro.crew",
+                                   pid: 70276,
+                                   axLeftEdge: -1)
+    let window = ObservedItem(windowNumber: 81,
+                              ownerPID: 1,
+                              bundleID: nil,
+                              ownerName: "Control Center",
+                              frame: CGRect(x: 1_800, y: 0, width: 36, height: 30),
+                              isOnScreen: true)
+
+    #expect(BarArranger.unavailablePinnedSentinels(
+        config: config,
+        identities: [kiro],
+        windows: [window]).isEmpty)
+}
+
+@Test @MainActor func stowsExcludedBoundaryDoesNotHideAPinnedSentinelFailure() {
+    var config = Config.default
+    config.setZone(.pinned, forBundleID: "com.amazon.kiro.crew")
+    let kiro = BarItemOwners.Owner(name: "Kiro Crew",
+                                   bundleID: "com.amazon.kiro.crew",
+                                   pid: 70276,
+                                   axLeftEdge: -1)
+    let seam = ObservedItem(windowNumber: 82,
+                            ownerPID: 1,
+                            bundleID: nil,
+                            ownerName: "Control Center",
+                            frame: CGRect(x: 1_900, y: 0, width: 17, height: 30),
+                            isOnScreen: true)
+
+    #expect(BarArranger.unavailablePinnedSentinels(
+        config: config,
+        identities: [kiro],
+        windows: [seam],
+        excluding: [82]) == ["com.amazon.kiro.crew"])
 }
 
 @Test func compactPanelObservesTheLiveControllerInsteadOfCapturingLaunchScalars() throws {

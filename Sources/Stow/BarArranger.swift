@@ -569,4 +569,35 @@ enum BarArranger {
         }
         return true
     }
+
+    /// Configured pinned apps whose Accessibility item exists but has no WindowServer position.
+    ///
+    /// Electron tray items can remain alive at AX's `x = -1` sentinel while publishing no
+    /// corresponding status-item window at all. Kiro Crew reproduced this with Stow fully
+    /// revealed: the app owned one 36pt AXPress item at x=-1, while a complete WindowServer scan
+    /// contained no Kiro Crew item to move. Such an app is neither arranged nor hidden by Stow;
+    /// it is unavailable at the OS/app boundary and needs to recreate its tray item.
+    @MainActor
+    static func unavailablePinnedSentinels(
+        config: Config,
+        identities: [BarItemOwners.Owner],
+        windows: [ObservedItem],
+        excluding excludedWindows: Set<CGWindowID> = []
+    ) -> [String] {
+        let positioned = identities.filter { $0.axLeftEdge != -1 }
+        let unclaimedPlausibleWindows = windows.filter { item in
+            !excludedWindows.contains(item.windowNumber)
+                && item.frame.width > 0
+                && item.frame.width <= 400
+                && item.owner(in: positioned) == nil
+        }
+        // An unclaimed window may belong to one of the sentinel owners, but AX gives us no safe
+        // way to decide which one. Stay conservative rather than accusing a healthy tray item.
+        guard unclaimedPlausibleWindows.isEmpty else { return [] }
+        return Set(identities.compactMap { owner -> String? in
+            guard owner.axLeftEdge == -1,
+                  config.zoneByBundleID?[owner.bundleID] == .pinned else { return nil }
+            return owner.bundleID
+        }).sorted()
+    }
 }
