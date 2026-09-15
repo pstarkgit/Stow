@@ -13,6 +13,12 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.40
+
+- Arrange now takes one stable snapshot when it opens instead of re-reading the bar every second.
+  The mirror no longer rearranges itself while you are deciding or Command-dragging.
+- Added **Refresh Bar** for the one moment you want to update the mirror after a drag.
+
 ## 0.1.39
 
 - Stow no longer moves any app's menu-bar icon and never touches the pointer. Which icons are

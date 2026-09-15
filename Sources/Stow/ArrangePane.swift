@@ -29,14 +29,11 @@ struct ArrangeContentView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         // The whole run is shown while this pane is open, so the user can see what they are
-        // dragging. Refreshes read the bar; they never change it.
+        // dragging. Take one snapshot, then leave the mirror alone while they interact. A timer
+        // here made the SwiftUI tiles reorder every second, stealing the user's place mid-drag.
         .task(id: screen?.displayID) {
             if hider.presentation == .tidy { hider.reveal() }
-            while !Task.isCancelled {
-                _ = hider.refresh(config: store.config)
-                owners = BarItemOwners.lastKnownClaims
-                try? await Task.sleep(for: .seconds(1))
-            }
+            refreshBar()
         }
         .onDisappear {
             // Leaving Arrange is the decision. Record where everything sits, then hide again if
@@ -44,6 +41,11 @@ struct ArrangeContentView: View {
             store.recordObservedZones(hider.observedZones)
             if !hider.hiddenBundleIDs.isEmpty { hider.hide() }
         }
+    }
+
+    private func refreshBar() {
+        _ = hider.refresh(config: store.config)
+        owners = BarItemOwners.lastKnownClaims
     }
 
     private var header: some View {
@@ -139,6 +141,9 @@ struct ArrangeContentView: View {
                 .font(.system(size: 10.5))
                 .foregroundStyle(StowTheme.inkSoft)
             Spacer(minLength: 8)
+            Button("Refresh Bar", action: refreshBar)
+                .buttonStyle(.bordered)
+                .help("Read the current menu bar after you finish a drag. The mirror stays still until you choose this.")
             if hidden > 0 {
                 Button(hider.presentation == .tidy ? "Show All" : "Hide Now") {
                     hider.toggle()
