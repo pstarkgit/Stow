@@ -244,8 +244,9 @@ import Testing
 }
 
 @Test func backgroundArrangementNeverGetsPointerAuthority() {
-    #expect(HideController.ArrangementIntent.explicitUserAction.allowsPointerControl)
-    #expect(HideController.ArrangementIntent.savedLayoutRepair.allowsPointerControl)
+    #expect(HideController.ArrangementIntent.assistedUserAction.allowsPointerControl)
+    #expect(!HideController.ArrangementIntent.manualUserAction.allowsPointerControl)
+    #expect(!HideController.ArrangementIntent.savedLayoutRepair.allowsPointerControl)
     #expect(!HideController.ArrangementIntent.background.allowsPointerControl)
 }
 
@@ -304,90 +305,106 @@ import Testing
 
     #expect(source.contains("NSWorkspace.didLaunchApplicationNotification"))
     #expect(source.contains("NSWorkspace.didTerminateApplicationNotification"))
-    #expect(source.contains("hider.refreshCandidatesWithoutMoving()"))
     #expect(source.contains("hider.reconcileSavedLayoutAfterCandidateChange(from: store.config)"))
     #expect(source.contains("for delay in [500, 1_000]"))
 }
 
-@Test @MainActor func pinnedSentinelWithoutAWindowIsReportedUnavailable() {
+@Test func sentinelOnlyTuckedAppDoesNotActivateTheBoundary() {
     var config = Config.default
-    config.setZone(.pinned, forBundleID: "com.amazon.kiro.crew")
-    let kiro = BarItemOwners.Owner(name: "Kiro Crew",
-                                   bundleID: "com.amazon.kiro.crew",
-                                   pid: 70276,
-                                   axLeftEdge: -1)
+    config.setZone(.tucked, forBundleID: "com.amazon.kiro.crew")
+    let own = BarItemOwners.Owner(name: "Stow", bundleID: "dev.starkpat.stow",
+                                  pid: 1, axLeftEdge: 900)
+    let sentinel = BarItemOwners.Owner(name: "Kiro Crew",
+                                      bundleID: "com.amazon.kiro.crew",
+                                      pid: 2, axLeftEdge: -1)
 
-    #expect(BarArranger.unavailablePinnedSentinels(
+    #expect(HideController.liveTuckedAvailability(
         config: config,
-        identities: [kiro],
-        windows: []) == ["com.amazon.kiro.crew"])
+        identities: [own, sentinel],
+        windows: [],
+        accessibilityTrusted: true,
+        ownBundle: "dev.starkpat.stow") == .noneAvailable)
 }
 
-@Test @MainActor func tuckedSentinelIsNotMisreportedAsAPinnedAvailabilityFailure() {
+@Test func configuredAppWithoutAStatusItemDoesNotActivateTheBoundary() {
     var config = Config.default
-    config.setZone(.tucked, forBundleID: "com.amazon.ACME")
-    let acme = BarItemOwners.Owner(name: "ACME",
-                                   bundleID: "com.amazon.ACME",
-                                   pid: 4050,
-                                   axLeftEdge: -1)
+    config.setZone(.tucked, forBundleID: "com.cindori.Backdrop.Wallpaper")
+    let own = BarItemOwners.Owner(name: "Stow", bundleID: "dev.starkpat.stow",
+                                  pid: 1, axLeftEdge: 900)
 
-    #expect(BarArranger.unavailablePinnedSentinels(
+    #expect(HideController.liveTuckedAvailability(
         config: config,
-        identities: [acme],
-        windows: []).isEmpty)
+        identities: [own],
+        windows: [],
+        accessibilityTrusted: true,
+        ownBundle: "dev.starkpat.stow") == .noneAvailable)
 }
 
-@Test @MainActor func unconfiguredSentinelIsNotMisreportedAsAPinnedAvailabilityFailure() {
-    let helper = BarItemOwners.Owner(name: "DisplayLink Manager",
-                                     bundleID: "com.displaylink.DisplayLinkUserAgent",
-                                     pid: 90210,
-                                     axLeftEdge: -1)
-
-    #expect(BarArranger.unavailablePinnedSentinels(
-        config: Config.default,
-        identities: [helper],
-        windows: []).isEmpty)
-}
-
-@Test @MainActor func pinnedSentinelWithAnUnclaimedWindowStaysUncertainRatherThanMisdiagnosed() {
+@Test func visibleTuckedItemActivatesTheBoundary() {
     var config = Config.default
-    config.setZone(.pinned, forBundleID: "com.amazon.kiro.crew")
-    let kiro = BarItemOwners.Owner(name: "Kiro Crew",
-                                   bundleID: "com.amazon.kiro.crew",
-                                   pid: 70276,
-                                   axLeftEdge: -1)
-    let window = ObservedItem(windowNumber: 81,
-                              ownerPID: 1,
-                              bundleID: nil,
+    config.setZone(.tucked, forBundleID: "com.example.visible")
+    let visible = BarItemOwners.Owner(name: "Visible", bundleID: "com.example.visible",
+                                     pid: 2, axLeftEdge: 1200)
+
+    #expect(HideController.liveTuckedAvailability(
+        config: config,
+        identities: [visible],
+        windows: [],
+        accessibilityTrusted: true,
+        ownBundle: "dev.starkpat.stow") == .available(["com.example.visible"]))
+}
+
+@Test func pushedTuckedItemNeedsItsRealWindowToActivateTheBoundary() {
+    var config = Config.default
+    config.setZone(.tucked, forBundleID: "com.example.hidden")
+    let own = BarItemOwners.Owner(name: "Stow", bundleID: "dev.starkpat.stow",
+                                  pid: 1, axLeftEdge: 900)
+    let pushed = BarItemOwners.Owner(name: "Hidden", bundleID: "com.example.hidden",
+                                    pid: 2, axLeftEdge: -3993)
+    let window = ObservedItem(windowNumber: 81, ownerPID: 1, bundleID: nil,
                               ownerName: "Control Center",
-                              frame: CGRect(x: 1_800, y: 0, width: 36, height: 30),
-                              isOnScreen: true)
+                              frame: CGRect(x: -3991, y: 0, width: 36, height: 24),
+                              isOnScreen: false)
 
-    #expect(BarArranger.unavailablePinnedSentinels(
+    #expect(HideController.liveTuckedAvailability(
         config: config,
-        identities: [kiro],
-        windows: [window]).isEmpty)
+        identities: [own, pushed],
+        windows: [window],
+        accessibilityTrusted: true,
+        ownBundle: "dev.starkpat.stow") == .available(["com.example.hidden"]))
+    #expect(HideController.liveTuckedAvailability(
+        config: config,
+        identities: [own, pushed],
+        windows: [],
+        accessibilityTrusted: true,
+        ownBundle: "dev.starkpat.stow") == .noneAvailable)
 }
 
-@Test @MainActor func stowsExcludedBoundaryDoesNotHideAPinnedSentinelFailure() {
+@Test func missingAccessibilityEvidenceIsNotTreatedAsNoLiveItems() {
     var config = Config.default
-    config.setZone(.pinned, forBundleID: "com.amazon.kiro.crew")
-    let kiro = BarItemOwners.Owner(name: "Kiro Crew",
-                                   bundleID: "com.amazon.kiro.crew",
-                                   pid: 70276,
-                                   axLeftEdge: -1)
-    let seam = ObservedItem(windowNumber: 82,
-                            ownerPID: 1,
-                            bundleID: nil,
-                            ownerName: "Control Center",
-                            frame: CGRect(x: 1_900, y: 0, width: 17, height: 30),
-                            isOnScreen: true)
+    config.setZone(.tucked, forBundleID: "com.example.hidden")
 
-    #expect(BarArranger.unavailablePinnedSentinels(
+    #expect(HideController.liveTuckedAvailability(
         config: config,
-        identities: [kiro],
-        windows: [seam],
-        excluding: [82]) == ["com.amazon.kiro.crew"])
+        identities: [],
+        windows: [],
+        accessibilityTrusted: false,
+        ownBundle: "dev.starkpat.stow") == .unknown)
+}
+
+@Test func missingPinnedItemsDoNotBecomeArrangementFailures() throws {
+    let root = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let app = try String(contentsOf: root.appending(path: "Sources/Stow/App.swift"),
+                         encoding: .utf8)
+    let mainWindow = try String(contentsOf: root.appending(path: "Sources/Stow/MainWindow.swift"),
+                                encoding: .utf8)
+
+    #expect(app.contains("arrangementFailures: hider.lastArrangeFailures,"))
+    #expect(!app.contains("pinnedAvailabilityFailures"))
+    #expect(!mainWindow.contains("pinnedAvailabilityFailures"))
 }
 
 @Test func compactPanelObservesTheLiveControllerInsteadOfCapturingLaunchScalars() throws {

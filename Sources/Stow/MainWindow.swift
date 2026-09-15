@@ -432,6 +432,10 @@ private struct ArrangeContentView: View {
     /// Stow's seam window number, so it is excluded from occupancy arithmetic.
     @State private var seamWindows: Set<CGWindowID> = []
     @State private var showSystemItems = false
+    /// Zone changes are durable immediately, but cursor-moving arrangement is always a
+    /// separate deliberate choice. These identifiers drive the manual-first follow-up card.
+    @State private var pendingArrangementBundleIDs: Set<String> = []
+    @State private var showsAssistedArrangementApproval = false
 
 
     var body: some View {
@@ -451,6 +455,16 @@ private struct ArrangeContentView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .task(id: screen?.displayID) { await rescan() }
+        .confirmationDialog(
+            "Let Stow arrange \(pendingArrangementBundleIDs.count) app\(pendingArrangementBundleIDs.count == 1 ? "" : "s")?",
+            isPresented: $showsAssistedArrangementApproval,
+            titleVisibility: .visible
+        ) {
+            Button("Assist Arrange") { apply() }
+            Button("Keep Manual", role: .cancel) {}
+        } message: {
+            Text("Stow will briefly control the cursor to Command-drag the selected icons. It verifies every move and shows everything if a move fails.")
+        }
     }
 
     private var header: some View {
@@ -461,7 +475,7 @@ private struct ArrangeContentView: View {
             Text("Choose what stays visible and what waits in Stow.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(StowTheme.inkSoft)
-            Text("Drag an app across the boundary. Changes save automatically.")
+            Text("Drag apps across the boundary to save a layout draft. Command-drag them yourself, or explicitly choose Assist Arrange before Stow moves the cursor.")
                 .font(.system(size: 10.5))
                 .foregroundStyle(StowTheme.inkMuted)
         }
@@ -526,15 +540,13 @@ private struct ArrangeContentView: View {
                     zoneOf: { store.config.zone(forBundleID: $0) },
                     onMove: { bundle, zone in
                         store.setZone(zone, forBundleID: bundle)
-                        // The zone is saved and drawn NOW; the seam move is coalesced. A board
-                        // that needed a separate Apply press made the drag feel like it did
-                        // nothing, and applying synchronously per drop froze it for seconds.
-                        apply()
+                        // Saving a desired zone is safe. Moving a different app's status item is
+                        // not implicit in that edit, because it requires synthetic mouse input.
+                        pendingArrangementBundleIDs.insert(bundle)
                     })
             }
 
             let failures = hider.lastArrangeFailures
-                + hider.pinnedAvailabilityFailures(from: store.config)
             if !failures.isEmpty {
                 consequenceBanner(
                     count: failures.count,
@@ -546,6 +558,7 @@ private struct ArrangeContentView: View {
                     }.joined(separator: "\n"))
             }
             controlRow()
+            manualArrangementControl
             systemSummary()
         }
     }
@@ -678,10 +691,8 @@ private struct ArrangeContentView: View {
     /// everyday show/hide action, avoiding a second Apply button that suggests the drag did not
     /// already take effect.
     private func controlRow() -> some View {
-        let nothingHidden = !store.config.hidesAnything
-        let hiddenCount = candidateApps().filter {
-            store.config.zone(forBundleID: $0.plan.bundleID) == .tucked
-        }.count
+        let nothingAssigned = !store.config.hidesAnything
+        let hiddenCount = hider.hiddenApps(from: store.config).count
         return HStack(spacing: 9) {
             if movingCut {
                 ProgressView().controlSize(.small).tint(StowTheme.blue)
@@ -689,22 +700,18 @@ private struct ArrangeContentView: View {
                     .font(.system(size: 10.5))
                     .foregroundStyle(StowTheme.inkSoft)
             } else {
-                let unavailable = hider.pinnedAvailabilityFailures(from: store.config)
-                Image(systemName: unavailable.isEmpty
-                      ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(unavailable.isEmpty
-                                     ? (StowTheme.stops(for: .tidy).first ?? StowTheme.blue)
-                                     : StowTheme.orange)
-                Text(unavailable.isEmpty
-                     ? (nothingHidden
-                        ? "Drag an app into In Stow to begin."
-                        : "Arrangement saved automatically")
-                     : "A pinned app needs to recreate its menu-bar item")
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(StowTheme.stops(for: .tidy).first ?? StowTheme.blue)
+                Text(nothingAssigned
+                     ? "Drag an app into In Stow to begin."
+                     : (hiddenCount == 0
+                        ? "Assignments saved; no assigned menu-bar items are available."
+                        : "Arrangement saved automatically"))
                     .font(.system(size: 10.5))
                     .foregroundStyle(StowTheme.inkSoft)
             }
             Spacer(minLength: 8)
-            if !nothingHidden {
+            if hiddenCount > 0 {
                 Button(hider.presentation == .tidy
                        ? "Show \(hiddenCount) App\(hiddenCount == 1 ? "" : "s")"
                        : "Hide Again") {
@@ -728,6 +735,46 @@ private struct ArrangeContentView: View {
     /// states they exist and stay.
     ///
     /// Filters on `cannotBeAddressedIndividually`, NOT on `isApple`, and that matters now that the
+
+    private var arrangementAccent: Color {
+        StowTheme.stops(for: .tidy).first ?? StowTheme.blue
+    }
+
+    private var manualArrangementControl: some View {
+        Group {
+            if !pendingArrangementBundleIDs.isEmpty {
+                HStack(alignment: .center, spacing: 10) {
+                    Image(systemName: "hand.draw.fill")
+                        .foregroundStyle(arrangementAccent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Layout draft saved")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(StowTheme.ink)
+                        Text("Command-drag the selected app\(pendingArrangementBundleIDs.count == 1 ? "" : "s") across Stow, or explicitly let Stow assist.")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(StowTheme.inkSoft)
+                    }
+                    Spacer(minLength: 8)
+                    Button("Assist Arrange…") {
+                        showsAssistedArrangementApproval = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(arrangementAccent)
+                    .disabled(movingCut)
+                    Button("Keep Manual") {
+                        pendingArrangementBundleIDs.removeAll()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(movingCut)
+                }
+                .padding(11)
+                .background(arrangementAccent.opacity(0.08),
+                            in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .stroke(arrangementAccent.opacity(0.35), lineWidth: 1))
+            }
+        }
+    }
     /// tile list above converged on the engine's candidate list. The engine excludes only
     /// `com.apple.controlcenter`, so an Apple extra like the Kerberos lock gets a draggable tile.
     /// While this filtered every `com.apple.*` bundle, the lock appeared BOTH as a tile the user can
@@ -825,9 +872,12 @@ private struct ArrangeContentView: View {
             // change, the first arrange MOVED `com.notebuddy.app` back onto the bar: it was
             // pinned, it had been swept, and nothing in the seam-moving path could recover it.
             //
-            _ = hider.arrangeByMovingItems(
+            let outcome = hider.arrangeByMovingItems(
                 from: store.config,
-                intent: .explicitUserAction)
+                intent: .assistedUserAction)
+            if outcome.isClean {
+                pendingArrangementBundleIDs.removeAll()
+            }
             // Reuse the walk the apply just took. See `rescan(reusingOwners:)`.
             await rescan(reusingOwners: true)
             movingCut = false
@@ -1080,15 +1130,10 @@ private struct ProfilesContentView: View {
         ruleEngine.noteManualSelection(selectedProfileID: profile.id)
         Task { @MainActor in
             await Task.yield()
-            let previous = store.config
-            let previousUndo = store.undoProfileID
-            let updated = store.apply(profile, candidateOrder: candidateOrder)
-            let outcome = hider.arrangeByMovingItems(
-                from: updated,
-                intent: .explicitUserAction)
-            if !outcome.isClean {
-                store.restoreProfileState(config: previous, undoProfileID: previousUndo)
-            }
+            _ = store.apply(profile, candidateOrder: candidateOrder)
+            // A profile changes the saved layout, never the cursor. Arrange is the one
+            // place that can request explicit assisted movement.
+            hider.showEverything()
             applyingProfileID = nil
         }
     }

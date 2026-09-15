@@ -13,6 +13,14 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.38
+
+- Saved apps that are not currently publishing a menu-bar item no longer count as hidden,
+  reserve an idle boundary, or turn a healthy layout into a false arrangement failure.
+- Arrange now saves zone changes as a manual draft. Stow only moves the cursor after you
+  explicitly confirm Assist Arrange, while profiles, launch repair, and background activity
+  leave the full menu bar visible.
+
 ## 0.1.37
 
 - Saved layouts now repair themselves after Stow relaunches or configured menu-bar apps
