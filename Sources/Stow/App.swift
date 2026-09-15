@@ -64,9 +64,6 @@ struct StowApp: App {
         if args.contains("--panel") {
             MainActor.assumeIsolated { StatusPanel.runPanelAndExit() }
         }
-        if args.contains("--move") {
-            MainActor.assumeIsolated { ItemMover.runMoveAndExit() }
-        }
         if args.contains("--rows") {
             MainActor.assumeIsolated { BarSnapshot.runRowsAndExit() }
         }
@@ -112,8 +109,9 @@ struct StowApp: App {
                     // Keep the shared snapshot current for the glyph and diagnostics.
                     remeasure()
                 },
-                // Clicking a hidden app opens its menu WITHOUT un-hiding it. Verified on a real
-                // hidden item at x-3036: pressed through accessibility, its menu opened.
+                // Clicking a hidden app shows the stowed run for a moment and opens that app's
+                // menu where it really is, then hides the run again on a timer. Only the width of
+                // Stow's own boundary changes; no icon is moved and the pointer is never touched.
                 onOpenHidden: { app in
                     // Dismiss Stow's own panel first. Two menu sessions cannot be open at once,
                     // so the target's menu would otherwise fight the one this click arrived
@@ -121,25 +119,14 @@ struct StowApp: App {
                     NSApp.sendAction(#selector(NSMenu.cancelTracking), to: nil, from: nil)
                     let pid = app.pid
 
-                    // Bring the item back to the visible bar BEFORE pressing it. Pressing while
-                    // it stays off-screen at a large negative x is the bug being fixed here: the
-                    // menu opened, but the item itself was neither visible nor usable, verified
-                    // directly against a real hidden item that reported x-3036.
-                    //
-                    // Falls back to pressing where it stands on ANY failure, seam missing or the
-                    // move itself refused: a menu at a negative x is worse than a visible one but
-                    // far better than a dead click, which is what doing nothing here would be.
                     do {
                         try revealer.reveal(bundleID: app.bundleID, pid: pid,
-                                            seamWindow: hider.tuckedSeamWindow,
-                                            duration: store.config.revealDuration)
+                                            duration: store.config.revealDuration,
+                                            show: { hider.reveal() },
+                                            retuck: { hider.hide(); remeasure() })
                     } catch {
-                        // Never press an item whose reveal failed. ACME reports AX x=-1 while
-                        // tucked; pressing that sentinel opens its menu at the far-left edge.
-                        // When macOS has removed the status-item window entirely, use the app's
-                        // ordinary reopen path instead. Verified with ACME: this opens its real
-                        // Overview window at a normal screen position rather than the left-edge
-                        // fallback menu. Normal hidden items still take the menu reveal path.
+                        // The app quit between the panel drawing and the click. Its ordinary
+                        // reopen path is the honest fallback.
                         guard let url = NSWorkspace.shared.urlForApplication(
                             withBundleIdentifier: app.bundleID) else { return }
                         let configuration = NSWorkspace.OpenConfiguration()
@@ -154,9 +141,8 @@ struct StowApp: App {
                     // modal. On the main actor that is a frozen panel for an action the user
                     // already saw succeed.
                     Task.detached {
-                        // Let the panel's own menu session finish, then wait for AX to catch up
-                        // with the WindowServer move. A fixed delay left ACME at x=-1 and caused
-                        // macOS to clamp its menu to the far-left edge.
+                        // Wait for the item to be visibly back on the bar before pressing it.
+                        // Pressing an off-screen item opens its menu clamped to the screen edge.
                         guard PressActionProbe.waitForVisiblePressItem(pid: pid) else { return }
                         _ = PressActionProbe.press(pid: pid)
                     }
@@ -211,6 +197,9 @@ struct StowApp: App {
                         hider.showEverything()
                         remeasure()
                     }
+                    // A partial hide (a profile that keeps a few stowed icons visible) needs to
+                    // know how much free bar there is. The snapshot already measures it.
+                    hider.headroomProvider = { snapshot.budget.headroom }
                     store.pruneUnavailableApps()
                     let candidateOrder = hider.currentCandidates(config: store.config).map(\.bundleID)
                     store.ensureProfileLayouts(candidateOrder: candidateOrder)
@@ -250,7 +239,7 @@ struct StowApp: App {
                         applyProfile: { profileID in
                             guard let profile = store.profiles.first(where: { $0.id == profileID })
                             else { return false }
-                            return activateProfile(profile, intent: .background)
+                            return activateProfile(profile)
                         },
                         profileName: { profileID in
                             store.profiles.first(where: { $0.id == profileID })?.name ?? profileID
@@ -334,31 +323,24 @@ struct StowApp: App {
         snapshot.refresh()
     }
 
-    private enum ProfileActivationIntent {
-        case manualUserAction
-        case background
-    }
-
-    /// Applies a profile from the UI, a shortcut, or a classified background rule.
+    /// Applies a profile from the UI, a shortcut, or a background rule.
+    ///
+    /// Safe from any caller, including automation: a profile is a boundary width, so applying it
+    /// never moves an icon and never touches the pointer.
     @discardableResult
-    private func activateProfile(
-        _ profile: Config.Profile,
-        intent: ProfileActivationIntent = .manualUserAction
-    ) -> Bool {
-        _ = intent
+    private func activateProfile(_ profile: Config.Profile) -> Bool {
         let candidateOrder = hider.currentCandidates(config: store.config).map(\.bundleID)
-        _ = store.apply(profile, candidateOrder: candidateOrder)
-        // Profiles are layout preferences, not consent to synthesize a drag. Keep the bar
-        // visible until the user opens Arrange and explicitly chooses assisted movement.
-        hider.showEverything()
+        let updated = store.apply(profile, candidateOrder: candidateOrder)
+        hider.applyProfile(peek: profile.tuckedRunDepth, config: updated)
         remeasure()
         return true
     }
 
     private func undoProfile() {
         let candidateOrder = hider.currentCandidates(config: store.config).map(\.bundleID)
-        guard store.undoProfile(candidateOrder: candidateOrder) != nil else { return }
-        hider.showEverything()
+        guard let undone = store.undoProfile(candidateOrder: candidateOrder),
+              let profile = undone.activeProfile else { return }
+        hider.applyProfile(peek: profile.tuckedRunDepth, config: undone)
         remeasure()
     }
 
@@ -431,7 +413,7 @@ private struct LiveStatusPanel: View {
             // Saved zones remain persisted when an app is unavailable, but only real visible or
             // pushed-off status items belong on the live hidden shelf.
             hiddenApps: hider.hiddenApps(from: store.config),
-            arrangementFailures: hider.lastArrangeFailures,
+            noticeCount: hider.notices.count,
             onTuckAllButPinned: onTuckAllButPinned,
             presentation: hider.presentation,
             onOpenHidden: onOpenHidden,

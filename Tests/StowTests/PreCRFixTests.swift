@@ -5,39 +5,6 @@ import Testing
 // Tests for the invariants the pre-CR review established. Each one pins a specific defect the
 // reviewers found, so a regression fails here rather than being rediscovered on a real bar.
 
-// MARK: - the arrange budget
-
-// The budget exists because the move loop was unbounded: `ItemMover` allows three attempts at up to
-// 1.75s each, so one stubborn item costs 5.25s and a seven-app bar could spin the main run loop for
-// 36s. What matters is not the number 3.0 but its RELATIONSHIP to what one move can cost, and that
-// relationship is what breaks silently if someone retunes the mover.
-
-@Test @MainActor func theArrangeBudgetAllowsAtLeastOneCompleteMoveAttempt() {
-    #expect(BarArranger.totalBudget >= ItemMover.worstCaseAttempt,
-            "a budget below one attempt would abandon the first app before it could ever land")
-}
-
-@Test @MainActor func theEnforcedCeilingStaysInsideWhatAUserWillWaitFor() {
-    // Pins the bound that is ACTUALLY enforced, not the constant. The budget guard sits at the top
-    // of the move loop, so the last move can start just inside it and then run to its own worst
-    // case; the real ceiling is therefore `totalBudget + worstCaseMove`.
-    //
-    // The first version of this test asserted `totalBudget < worstCaseMove * 2` and would have
-    // passed at a budget of 10s, which defends nothing. Ten seconds is the outer edge of a stall a
-    // user will read as a hang rather than a crash, and it is what this holds the whole move phase
-    // to.
-    #expect(BarArranger.enforcedCeiling <= 10.0,
-            "a move phase that can block the main actor past ten seconds reads as a hang")
-}
-
-@Test @MainActor func theEnforcedCeilingIsTheBudgetPlusOneFullyRetriedMove() {
-    // The relationship itself, so retuning either constant cannot silently break the reasoning the
-    // budget's doc comment depends on.
-    #expect(BarArranger.enforcedCeiling == BarArranger.totalBudget + ItemMover.worstCaseMove)
-    #expect(ItemMover.worstCaseMove > ItemMover.worstCaseAttempt,
-            "a retried move must cost more than a single attempt, or the retry does nothing")
-}
-
 // MARK: - the zoning predicate, and the split it used to have
 
 // The engine and the Arrange board built two candidate lists with two different Apple predicates, so
@@ -48,8 +15,7 @@ import Testing
     // Control Center is excluded because its six visible items share ONE bundle id, and the bundle
     // id is the zoning key, so they could only ever move as a block.
     #expect(VisibleRowIdentity.cannotBeAddressedIndividually("com.apple.controlcenter"))
-    // Every other Apple bundle is addressable. Measured: the Kerberos extra moved x1153 to x1228
-    // under the same synthesised drag `ItemMover` uses.
+    // Every other Apple bundle is addressable, so it can sit on either side of the boundary.
     #expect(VisibleRowIdentity.cannotBeAddressedIndividually("com.apple.KerberosMenuExtra") == false)
     #expect(VisibleRowIdentity.cannotBeAddressedIndividually("com.microsoft.OneDrive") == false)
 }
@@ -80,7 +46,7 @@ import Testing
                                                homes: [:],
                                                ownBundle: "dev.starkpat.stow")
     #expect(candidates.contains { $0.bundleID == "com.apple.KerberosMenuExtra" },
-            "the lock must be offerable, since the arranger can move it")
+            "the lock must be listed, since the user can drag it across the boundary")
 }
 
 @Test func controlCenterIsNotACandidateEvenWhenItIsOnTheBar() {
@@ -122,9 +88,8 @@ import Testing
 
 // MARK: - the reveal state machine
 
-// `RevealCoordinator`'s move path needs a real bar, so what is testable is the DECISION that governs
-// whether a previously revealed item gets put back at all. That decision is where the leak lived: a
-// second reveal overwrote the state that named the first item, so a failed retuck forgot it.
+// `RevealCoordinator` changes only the boundary's width now, but the DECISION about a reveal that
+// arrives while another is out is still pure and still logged, so it stays pinned.
 
 @Test func revealingASecondItemDecidesToPutTheFirstBack() {
     let step = RevealCoordinator.NextStep.decide(currentlyRevealed: "us.zoom.xos",
@@ -144,37 +109,9 @@ import Testing
                                               requesting: "us.zoom.xos") == .revealFresh)
 }
 
-// MARK: - the drain budget
-
-// `drainPendingRetucks` retries held retucks synchronously on the main actor, each costing up to a
-// full `ItemMover.worstCaseMove`. Its budget shipped at 6.0s, ABOVE that 5.25s cost, so after one
-// full-cost retry the guard still passed and a second started: 10.5s inside a click, which is the
-// opposite of what the constant's own comment claimed it delivered. These pin the relationship that
-// makes "one retry per drain" true, rather than pinning the number.
-
-@Test @MainActor func aDrainCannotStartASecondRetryAfterAFullCostFirstOne() {
-    #expect(RevealCoordinator.drainBudget <= ItemMover.worstCaseMove,
-            "a budget above one fully-retried move lets a second retry start and doubles the stall")
-}
-
-@Test @MainActor func theDrainIsBoundedNoLooserThanAnArrange() {
-    // Both are promises about how long the main actor may be held, and the drain's is made inside a
-    // click while the arrange's is not, so the drain must not be the more generous of the two.
-    #expect(RevealCoordinator.drainBudget <= BarArranger.totalBudget)
-}
-
-@Test func onlyUnidentifiedItemsOnTheHiddenSideBlockAnArrange() {
-    #expect(BarArranger.unresolvedItemIsUnsafe(index: 2, seamIndex: 4))
-    #expect(!BarArranger.unresolvedItemIsUnsafe(index: 4, seamIndex: 4))
-    #expect(!BarArranger.unresolvedItemIsUnsafe(index: 6, seamIndex: 4))
-}
-
 // MARK: - the hides-anything predicate
 
-// This was written out by hand in two switch statements that must agree: the arrange's success ending
-// and its failure ending. They were identical and nothing stopped them drifting, and drift there
-// silently reintroduces a real bug, a failed arrange that leaves every tucked app on show. It is one
-// accessor now, so these pin its meaning rather than its spelling.
+// One accessor, so these pin its meaning rather than its spelling.
 
 @Test func noZonesMeansNothingIsHidden() {
     #expect(Config.default.hidesAnything == false)
@@ -185,7 +122,7 @@ import Testing
 
 @Test func anAppPinnedExplicitlyStillHidesNothing() {
     // `.pinned` is the default for an unassigned app, so an explicit pin must not read as a request
-    // to hide. Getting this backwards would make every arrange end by expanding the seam.
+    // to hide.
     var cfg = Config.default
     cfg.zoneByBundleID = ["us.zoom.xos": .pinned]
     #expect(cfg.hidesAnything == false)

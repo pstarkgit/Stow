@@ -8,9 +8,9 @@ It uses two plain zones:
 - **On Bar**: always visible.
 - **In Stow**: hidden until opened.
 
-The app deliberately fails open. Every arrangement is verified after moving; if
-any selected app does not land, Stow rolls completed moves back and shows everything.
-Launch failures are shown in the menu panel rather than existing only in a log.
+The app deliberately fails open. Stow never moves another app's icon and never
+touches your pointer. If Stow's own control would ever leave the bar, it shows
+everything instead.
 
 ## Identity
 
@@ -31,8 +31,8 @@ The behavior-first icon study is available at
 - A stable signing identity is recommended so Accessibility permission survives
   reinstallations
 
-Stow uses Accessibility to identify and move status items. It does not require
-Screen Recording.
+Stow uses Accessibility to identify status items and to open a stowed app's menu.
+It does not require Screen Recording.
 
 `Command-Shift-Escape` is the global emergency shortcut for **Show Everything**.
 It also cancels pending automatic re-tucks.
@@ -70,13 +70,23 @@ be granted to Stow once.
 
 ## How It Works
 
-macOS has no public API for hiding another application's status item. Stow keeps
-a narrow status item at a stable boundary and moves selected app icons around
-that boundary with targeted Command-drag events.
+macOS has no public API for hiding another application's status item, and no
+public API for moving one. Stow does neither. It owns one narrow status item, the
+boundary, and widens it to push everything to its left off the bar.
 
-Stow snapshots the requested sides, moves only the apps that need changing, then
-scans the bar again. A failed move or verification mismatch reverses completed
-moves and rests the boundary so the entire menu bar remains visible.
+Which icons sit left of the boundary is your decision, made once with a real
+Command-drag in the real menu bar. macOS honours the drag and remembers every
+item's position across restarts, so Stow has nothing to re-arrange at launch.
+
+The Arrange window is a live mirror of your bar with the boundary drawn in it, so
+you can see what is stowed while you drag. It records where you put things and
+points out drift later: an app that came back to the visible side, or a new app
+that appeared, becomes a notice with a "Keep on bar" choice rather than something
+Stow moves for you.
+
+Clicking a stowed app in the panel shrinks the boundary for a few seconds, opens
+that app's menu where it really is, then widens the boundary again. Profiles are
+boundary widths: switching one is instant and cannot be refused.
 
 Configuration is schema-versioned. Older `vaulted` assignments migrate to
 `tucked`, and unknown fields are retained so a newer config is not silently

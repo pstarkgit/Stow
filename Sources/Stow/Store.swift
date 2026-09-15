@@ -7,15 +7,13 @@ import Foundation
 /// Per-app zone membership IS trackable now: `Config.zoneByBundleID` keys on bundle
 /// id, which survives a relaunch because `BarItemOwners` recovers it from the owning
 /// app itself rather than from the window server (see `Config`'s own header comment
-/// for the full correction). What `Store` does not yet do is ACT on that membership:
-/// reveal behaviour, spacer geometry, named profiles, and rule definitions are exposed
-/// here exactly as `Config` persists them. A zone assignment DOES now take visible effect on the
-/// bar: `Config.setZone(_:forBundleID:)` records it and `BarArranger` acts on it, via
-/// `HideController.arrangeByMovingItems`. This used to say the engine downstream did not exist,
-/// which was true when the file was written and is not now.
+/// for the full correction). A zone is a RECORD of where the user put an icon, not an
+/// instruction to move it: `HideController` reads the real bar, Arrange records what it
+/// sees through `recordObservedZones`, and the record exists so drift and new arrivals
+/// can be pointed out. Nothing downstream moves an icon.
 ///
-/// Rules remain persisted-only. Profiles are live: each owns a saved app-zone map, selecting one
-/// applies that map to `Config`, and Arrange edits update only the active profile.
+/// Rules remain persisted-only. Profiles are live: each owns a saved app-zone map and a
+/// boundary depth, and selecting one changes only the boundary's width.
 @MainActor
 final class Store: ObservableObject {
 
@@ -217,17 +215,27 @@ final class Store: ObservableObject {
 
     /// Changes one zone and records it in the active profile's snapshot.
     func setZone(_ zone: Zone, forBundleID bundleID: String) {
+        recordObservedZones([bundleID: zone])
+    }
+
+    /// Records where the user has put things, as read from the real bar.
+    ///
+    /// Called when Arrange closes and when a notice is answered. Only the named apps change;
+    /// an app the bar did not report keeps whatever was recorded for it. The active profile's
+    /// snapshot follows, so switching away and back restores the same record.
+    func recordObservedZones(_ zones: [String: Zone]) {
+        guard !zones.isEmpty else { return }
         var updated = config
-        updated.setZone(zone, forBundleID: bundleID)
+        for (bundleID, zone) in zones { updated.setZone(zone, forBundleID: bundleID) }
         if let activeID = updated.activeProfileID,
            var profiles = updated.profiles,
            let index = profiles.firstIndex(where: { $0.id == activeID }) {
-            var zones = profiles[index].appZones ?? (updated.zoneByBundleID ?? [:])
-            zones[bundleID] = zone
-            profiles[index].appZones = zones
+            var profileZones = profiles[index].appZones ?? (updated.zoneByBundleID ?? [:])
+            for (bundleID, zone) in zones { profileZones[bundleID] = zone }
+            profiles[index].appZones = profileZones
             updated.profiles = profiles
         }
-        config = updated
+        if updated != config { config = updated }
     }
 
     static let builtInProfileIDs: Set<String> = [
