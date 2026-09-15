@@ -14,20 +14,40 @@ final class HideController: ObservableObject {
         case everything
     }
 
-    /// Whether a caller is authorized to synthesize the Command-drag that reorders another app.
+    /// A caller may synthesize a Command-drag only after the user explicitly approves
+    /// an assisted arrangement in the Arrange pane. A click that merely changes a saved
+    /// profile or a lifecycle repair never grants that authority.
     enum ArrangementIntent: Sendable {
-        case explicitUserAction
+        case assistedUserAction
+        case manualUserAction
         case savedLayoutRepair
         case background
 
         nonisolated var allowsPointerControl: Bool {
-            self == .explicitUserAction || self == .savedLayoutRepair
+            self == .assistedUserAction
         }
     }
 
     @Published private(set) var presentation: Presentation = .everything
     @Published private(set) var lastArrangeFailures: [BarArranger.Outcome.Failure] = []
     @Published private(set) var candidateRevision = 0
+
+    /// Whether a saved tucked assignment has a real status item right now.
+    ///
+    /// Persisted intent and live menu-bar state are deliberately separate. A running app can
+    /// retain an `AXExtrasMenuBar` child at the `x = -1` sentinel, or publish no child at all,
+    /// while its saved assignment remains useful for the next time the item returns. Neither
+    /// condition means Stow is currently hiding an app or needs to consume a boundary slot.
+    enum LiveTuckedAvailability: Equatable {
+        case available(Set<String>)
+        case noneAvailable
+        case unknown
+
+        var bundleIDs: Set<String> {
+            if case .available(let bundleIDs) = self { return bundleIDs }
+            return []
+        }
+    }
 
     var isHidden: Bool { presentation != .everything }
 
@@ -36,6 +56,9 @@ final class HideController: ObservableObject {
     private static let pushWidth: CGFloat = 10_000
     private var seams: [SpacerItem.Boundary: SpacerItem] = [:]
     private var restingCutX: CGFloat?
+    /// Last conclusively observed live tucked apps. Unknown refreshes preserve the previous
+    /// answer rather than laundering missing Accessibility evidence into a confident zero.
+    private var activeTuckedBundleIDs: Set<String> = []
 
     static func placeOwnTokenOutsideSeam() {
         UserDefaults.standard.set(tokenOffsetFromRightEdge,
@@ -66,8 +89,23 @@ final class HideController: ObservableObject {
     /// Shows the complete bar and invalidates every delayed move from an earlier reveal.
     func showEverything() {
         RevealCoordinator.shared.cancelPendingRetucks()
-        prepare()
         seams[.tucked]?.expand(toPush: SpacerItem.restingLength)
+        presentation = .everything
+    }
+
+    /// Removes an idle boundary entirely so saved-but-unavailable apps do not consume 17pt.
+    ///
+    /// The placement preference remains intact. If one of those apps later republishes a real
+    /// status item, lifecycle reconciliation recreates the same boundary and applies the saved
+    /// assignment. This is used only after a conclusive live scan reports zero tucked items.
+    private func deactivateBoundary() {
+        RevealCoordinator.shared.cancelPendingRetucks()
+        for seam in seams.values {
+            seam.expand(toPush: SpacerItem.restingLength)
+            seam.remove()
+        }
+        seams.removeAll()
+        restingCutX = nil
         presentation = .everything
     }
 
@@ -111,11 +149,27 @@ final class HideController: ObservableObject {
     ///
     /// Discovery is kept separate from reconciliation so callers can redraw observers before
     /// deciding whether the already-selected saved layout needs repair.
-    func refreshCandidatesWithoutMoving() {
+    @discardableResult
+    func refreshCandidatesWithoutMoving(from config: Config) -> LiveTuckedAvailability {
         let refreshed = BarItemOwners.refreshCaches()
+        let availability = Self.liveTuckedAvailability(
+            config: config,
+            identities: refreshed.identities,
+            windows: ItemMover.positionableItems(),
+            accessibilityTrusted: PressActionProbe.isTrusted,
+            ownBundle: Bundle.main.bundleIdentifier)
+        switch availability {
+        case .available(let bundleIDs):
+            activeTuckedBundleIDs = bundleIDs
+        case .noneAvailable:
+            activeTuckedBundleIDs = []
+        case .unknown:
+            break
+        }
         candidateRevision &+= 1
         BarArranger.append("candidate refresh identities=\(refreshed.identities.count)"
                            + " claims=\(refreshed.claims.count) pointerMoves=0")
+        return availability
     }
 
     /// Merges live locations, remembered locations, and pushed-off identities.
@@ -164,17 +218,51 @@ final class HideController: ObservableObject {
         return result.sorted { $0.homeX > $1.homeX }
     }
 
+    /// Resolves persisted tucked assignments against status items that physically exist now.
+    ///
+    /// A positive AX x is a visible item. A value below -1 is a genuinely pushed item only when
+    /// WindowServer still publishes a matching non-zero-width window. Exactly -1 is macOS's
+    /// "no usable position" sentinel and must never activate Stow's boundary by itself.
+    nonisolated static func liveTuckedAvailability(
+        config: Config,
+        identities: [BarItemOwners.Owner],
+        windows: [ObservedItem],
+        accessibilityTrusted: Bool,
+        ownBundle: String?
+    ) -> LiveTuckedAvailability {
+        guard config.hidesAnything else { return .noneAvailable }
+
+        let live = Set(identities.compactMap { owner -> String? in
+            guard !owner.bundleID.isEmpty,
+                  owner.bundleID != ownBundle,
+                  !VisibleRowIdentity.cannotBeAddressedIndividually(owner.bundleID),
+                  config.zone(forBundleID: owner.bundleID) == .tucked else { return nil }
+
+            if owner.axLeftEdge > 0 { return owner.bundleID }
+            guard BarItemOwners.isPushedOffScreen(owner.axLeftEdge) else { return nil }
+            let hasWindow = windows.contains {
+                $0.frame.width > 0 && abs($0.frame.minX - owner.axLeftEdge) <= 10
+            }
+            return hasWindow ? owner.bundleID : nil
+        })
+
+        if !live.isEmpty { return .available(live) }
+        // No Accessibility grant, or an entirely empty owner walk, is missing evidence. It is
+        // not proof that every configured item is absent.
+        guard accessibilityTrusted, !identities.isEmpty else { return .unknown }
+        return .noneAvailable
+    }
+
     func hiddenApps(from config: Config) -> [HiddenApp] {
-        currentCandidates(config: config).compactMap { candidate in
-            let zone = config.zone(forBundleID: candidate.bundleID)
-            guard zone != .pinned,
+        activeTuckedBundleIDs.compactMap { bundleID in
+            guard config.zone(forBundleID: bundleID) == .tucked,
                   let running = NSRunningApplication
-                    .runningApplications(withBundleIdentifier: candidate.bundleID).first
+                    .runningApplications(withBundleIdentifier: bundleID).first
             else { return nil }
-            return HiddenApp(bundleID: candidate.bundleID,
-                             name: running.localizedName ?? candidate.bundleID,
+            return HiddenApp(bundleID: bundleID,
+                             name: running.localizedName ?? bundleID,
                              icon: running.icon,
-                             zone: zone,
+                             zone: .tucked,
                              pid: running.processIdentifier)
         }
         .sorted {
@@ -192,12 +280,10 @@ final class HideController: ObservableObject {
     }
 
     func measuredSeamWidth(_ boundary: SpacerItem.Boundary = .tucked) -> CGFloat? {
-        prepare()
         return seams[boundary]?.measuredFrame()?.width
     }
 
     func seamWindowNumbers() -> Set<CGWindowID> {
-        prepare()
         guard let seam = seams[.tucked] else { return [] }
         _ = seam.measuredFrame()
         if let window = seam.windowNumber { return [window] }
@@ -205,7 +291,6 @@ final class HideController: ObservableObject {
     }
 
     func tuckedSeamWindow() -> CGWindowID? {
-        prepare()
         guard let seam = seams[.tucked] else { return nil }
         _ = seam.measuredFrame()
         return seam.windowNumber
@@ -222,10 +307,30 @@ final class HideController: ObservableObject {
     /// refuses real gestures/modifiers, and this path still fails open if macOS rejects a move.
     func restoreSavedLayout(from config: Config) {
         lastArrangeFailures = []
-        showEverything()
         guard config.hidesAnything else {
+            activeTuckedBundleIDs = []
+            deactivateBoundary()
             BarArranger.append("launch restore=everything pointerMoves=0")
             return
+        }
+
+        awaitBarToSettle(timeout: Self.safeRestoreSettleTimeout)
+        switch refreshCandidatesWithoutMoving(from: config) {
+        case .noneAvailable:
+            deactivateBoundary()
+            BarArranger.append("launch restore=inactive liveTucked=0 pointerMoves=0")
+            return
+        case .unknown:
+            let outcome = failedOutcome(
+                reason: PressActionProbe.isTrusted
+                    ? "menu-bar item identity is not available yet"
+                    : "Accessibility access is off, so apps cannot be identified safely",
+                began: Date())
+            BarArranger.log(outcome, context: "launch restore evidence")
+            return
+        case .available:
+            prepare()
+            showEverything()
         }
 
         var attempt = 0
@@ -271,12 +376,35 @@ final class HideController: ObservableObject {
     func reconcileSavedLayoutAfterCandidateChange(from config: Config) {
         guard config.hidesAnything else {
             lastArrangeFailures = []
-            showEverything()
+            activeTuckedBundleIDs = []
+            deactivateBoundary()
             return
         }
 
         awaitBarToSettle(timeout: Self.safeRestoreSettleTimeout)
-        _ = BarItemOwners.refreshCache()
+        switch refreshCandidatesWithoutMoving(from: config) {
+        case .noneAvailable:
+            lastArrangeFailures = []
+            deactivateBoundary()
+            BarArranger.append("lifecycle reconcile=inactive liveTucked=0 pointerMoves=0")
+            return
+        case .unknown:
+            _ = failedOutcome(
+                reason: PressActionProbe.isTrusted
+                    ? "menu-bar item identity is not available yet"
+                    : "Accessibility access is off, so apps cannot be identified safely",
+                began: Date())
+            return
+        case .available:
+            break
+        }
+
+        if seams[.tucked] == nil {
+            prepare()
+            showEverything()
+            awaitBarToSettle(timeout: Self.safeRestoreSettleTimeout)
+            _ = BarItemOwners.refreshCache()
+        }
         let seamID = tuckedSeamWindow()
         if BarArranger.isArranged(config: config, seamWindow: { seamID }) {
             lastArrangeFailures = []
@@ -287,21 +415,6 @@ final class HideController: ObservableObject {
 
         let outcome = arrangeByMovingItems(from: config, intent: .savedLayoutRepair)
         BarArranger.log(outcome, context: "lifecycle reconcile")
-    }
-
-    /// Reports pinned apps whose own tray item is unavailable, without blaming Stow's boundary.
-    func pinnedAvailabilityFailures(from config: Config) -> [BarArranger.Outcome.Failure] {
-        let unavailable = BarArranger.unavailablePinnedSentinels(
-            config: config,
-            identities: BarItemOwners.lastKnownIdentities,
-            windows: ItemMover.positionableItems(),
-            excluding: seamWindowNumbers())
-        return unavailable.map { bundleID in
-            .init(
-                bundleID: bundleID,
-                reason: "its menu-bar item is unavailable even while Stow is fully revealed.",
-                recovery: "Reopen that app so macOS recreates its menu-bar item.")
-        }
     }
 
     /// Retries the read-only launch proof before escalating to the bounded saved-layout repair.
@@ -330,15 +443,43 @@ final class HideController: ObservableObject {
         intent: ArrangementIntent
     ) -> BarArranger.Outcome {
         let began = Date()
+        if !config.hidesAnything {
+            activeTuckedBundleIDs = []
+            lastArrangeFailures = []
+            deactivateBoundary()
+            var outcome = BarArranger.Outcome()
+            outcome.cost = Date().timeIntervalSince(began)
+            BarArranger.log(outcome, context: "arrange no tucked assignments pointerMoves=0")
+            return outcome
+        }
+
+        switch refreshCandidatesWithoutMoving(from: config) {
+        case .noneAvailable:
+            lastArrangeFailures = []
+            deactivateBoundary()
+            var outcome = BarArranger.Outcome()
+            outcome.cost = Date().timeIntervalSince(began)
+            BarArranger.log(outcome, context: "arrange inactive liveTucked=0 pointerMoves=0")
+            return outcome
+        case .unknown:
+            return failedOutcome(
+                reason: PressActionProbe.isTrusted
+                    ? "menu-bar item identity is not available yet"
+                    : "Accessibility access is off, so apps cannot be identified safely",
+                began: began)
+        case .available:
+            break
+        }
+
         guard intent.allowsPointerControl else {
             var outcome = BarArranger.Outcome()
             outcome.failed = [.init(
                 bundleID: nil,
-                reason: "a background profile change needs menu-bar movement.",
-                recovery: "Choose that profile manually so Stow never takes the pointer silently.")]
+                reason: "this layout needs menu-bar movement, but assisted arrangement is off.",
+                recovery: "Command-drag the selected icons yourself, or choose Assist Arrange in Arrange." )]
             outcome.cost = Date().timeIntervalSince(began)
             lastArrangeFailures = outcome.failed
-            BarArranger.log(outcome, context: "arrange blocked background pointerMoves=0")
+            BarArranger.log(outcome, context: "arrange blocked unapproved pointerMoves=0")
             return outcome
         }
         prepare()
@@ -398,7 +539,7 @@ final class HideController: ObservableObject {
         case .revealed:
             reveal()
         case .tidy, .everything:
-            config.hidesAnything ? hide() : showEverything()
+            activeTuckedBundleIDs.isEmpty ? deactivateBoundary() : hide()
         }
         return outcome
     }

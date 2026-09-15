@@ -274,7 +274,6 @@ struct StowApp: App {
                         Task { @MainActor in
                             for delay in [500, 1_000] {
                                 try? await Task.sleep(for: .milliseconds(delay))
-                                hider.refreshCandidatesWithoutMoving()
                                 hider.reconcileSavedLayoutAfterCandidateChange(from: store.config)
                                 remeasure()
                             }
@@ -284,7 +283,6 @@ struct StowApp: App {
                     for: NSWorkspace.didTerminateApplicationNotification)) { _ in
                         Task { @MainActor in
                             try? await Task.sleep(for: .milliseconds(500))
-                            hider.refreshCandidatesWithoutMoving()
                             hider.reconcileSavedLayoutAfterCandidateChange(from: store.config)
                             remeasure()
                         }
@@ -337,7 +335,7 @@ struct StowApp: App {
     }
 
     private enum ProfileActivationIntent {
-        case explicitUserAction
+        case manualUserAction
         case background
     }
 
@@ -345,35 +343,22 @@ struct StowApp: App {
     @discardableResult
     private func activateProfile(
         _ profile: Config.Profile,
-        intent: ProfileActivationIntent = .explicitUserAction
+        intent: ProfileActivationIntent = .manualUserAction
     ) -> Bool {
+        _ = intent
         let candidateOrder = hider.currentCandidates(config: store.config).map(\.bundleID)
-        let previous = store.config
-        let previousUndo = store.undoProfileID
-        let profileConfig = store.apply(profile, candidateOrder: candidateOrder)
-        let arrangementIntent: HideController.ArrangementIntent = intent == .explicitUserAction
-            ? .explicitUserAction : .background
-        let outcome = hider.arrangeByMovingItems(
-            from: profileConfig,
-            intent: arrangementIntent)
-        if !outcome.isClean {
-            store.restoreProfileState(config: previous, undoProfileID: previousUndo)
-        }
+        _ = store.apply(profile, candidateOrder: candidateOrder)
+        // Profiles are layout preferences, not consent to synthesize a drag. Keep the bar
+        // visible until the user opens Arrange and explicitly chooses assisted movement.
+        hider.showEverything()
         remeasure()
-        return outcome.isClean
+        return true
     }
 
     private func undoProfile() {
         let candidateOrder = hider.currentCandidates(config: store.config).map(\.bundleID)
-        let previous = store.config
-        let previousUndo = store.undoProfileID
-        guard let undoConfig = store.undoProfile(candidateOrder: candidateOrder) else { return }
-        let outcome = hider.arrangeByMovingItems(
-            from: undoConfig,
-            intent: .explicitUserAction)
-        if !outcome.isClean {
-            store.restoreProfileState(config: previous, undoProfileID: previousUndo)
-        }
+        guard store.undoProfile(candidateOrder: candidateOrder) != nil else { return }
+        hider.showEverything()
         remeasure()
     }
 
@@ -443,11 +428,10 @@ private struct LiveStatusPanel: View {
     var body: some View {
         StatusPanel(
             state: snapshot.state,
-            // Hidden apps come from persisted zones because pushed-off items are absent from the
-            // visible scan by definition.
+            // Saved zones remain persisted when an app is unavailable, but only real visible or
+            // pushed-off status items belong on the live hidden shelf.
             hiddenApps: hider.hiddenApps(from: store.config),
-            arrangementFailures: hider.lastArrangeFailures
-                + hider.pinnedAvailabilityFailures(from: store.config),
+            arrangementFailures: hider.lastArrangeFailures,
             onTuckAllButPinned: onTuckAllButPinned,
             presentation: hider.presentation,
             onOpenHidden: onOpenHidden,
