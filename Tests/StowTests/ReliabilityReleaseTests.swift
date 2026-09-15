@@ -96,65 +96,6 @@ import Testing
     #expect(script.contains(#"--sign "$DEVID_HASH" "$APP""#))
 }
 
-@Test func itemMoverRetriesOnlyBeforeItsThirdAttempt() {
-    #expect(ItemMover.shouldRetry(after: 1))
-    #expect(ItemMover.shouldRetry(after: 2))
-    #expect(!ItemMover.shouldRetry(after: 3))
-}
-
-@Test func multiItemAppMovesBesideItsSiblingOnTheRequestedSide() {
-    let layout: [(windowID: CGWindowID, bundleID: String?)] = [
-        (7311, "eu.exelban.Stats"),
-        (1032, "com.amazon.kiro.crew"),
-        (6683, "com.openai.codex"),
-        (30, "com.apple.KerberosMenuExtra"),
-        (155, "com.microsoft.OneDrive"),
-        (7318, "dev.starkpat.stow"),
-        (7192, "eu.exelban.Stats"),
-        (7190, "eu.exelban.Stats"),
-        (7195, "eu.exelban.Stats"),
-    ]
-
-    #expect(BarArranger.siblingAnchor(bundleID: "eu.exelban.Stats",
-                                      wantsRight: true,
-                                      seamIndex: 5,
-                                      items: layout) == 7192)
-}
-
-@Test func multiItemAppCrossesTheBoundaryNearestFirstAndChainsItsOwnOrder() {
-    let bundleID = "com.bjango.istatmenus.status"
-    let layout: [(windowID: CGWindowID, bundleID: String?)] = [
-        (1095, bundleID),
-        (1096, bundleID),
-        (1094, bundleID),
-        (1092, bundleID),
-        (1091, bundleID),
-        (1093, bundleID),
-        (1133, "dev.starkpat.stow"),
-    ]
-    let moves = layout.prefix(6).map { item in
-        BarArranger.TransactionMove(
-            bundleID: bundleID,
-            windowID: item.windowID,
-            hostPID: 1,
-            wantsRight: true)
-    }
-
-    let planned = BarArranger.movementPlan(
-        moves: moves,
-        seamIndex: 6,
-        items: layout)
-
-    #expect(planned.map(\.windowID) == [1093, 1091, 1092, 1094, 1096, 1095])
-    #expect(planned.map(\.siblingAnchorID) == [nil, 1093, 1091, 1092, 1094, 1096])
-}
-
-@Test func itemMoverDoesNotAcceptOneTransientCorrectFrameAsSettled() {
-    #expect(!ItemMover.positionIsStable(correctSamples: 1))
-    #expect(!ItemMover.positionIsStable(correctSamples: 9))
-    #expect(ItemMover.positionIsStable(correctSamples: 10))
-}
-
 @Test func boundaryIdentityUsesWidthWhenANeighbourSharesItsReportedX() {
     let seam = ObservedItem(windowNumber: 10, ownerPID: 1, bundleID: nil,
                             ownerName: "Control Center",
@@ -183,73 +124,6 @@ import Testing
         ownFrame: CGRect(x: 1163, y: 0, width: 17, height: 33)) == nil)
 }
 
-@Test @MainActor func anAppRefusalGetsOneFreshArrangementAttempt() {
-    var attempts = 0
-    var resets = 0
-    let outcome = HideController.executeArrangementWithTransientRetry(
-        perform: {
-            attempts += 1
-            if attempts == 1 {
-                var failed = BarArranger.Outcome()
-                failed.failed = [transactionFailure("com.example.app", "move refused")]
-                return failed
-            }
-            return BarArranger.Outcome()
-        },
-        beforeRetry: { resets += 1 })
-
-    #expect(attempts == 2)
-    #expect(resets == 1)
-    #expect(outcome.isClean)
-}
-
-@Test @MainActor func freshArrangementPassesConvergeAcrossTwoDifferentRefusals() {
-    var attempts = 0
-    var resets = 0
-    let outcome = HideController.executeArrangementWithTransientRetry(
-        perform: {
-            attempts += 1
-            if attempts < 3 {
-                var partial = BarArranger.Outcome()
-                partial.moved = [attempts == 1 ? "a" : "b"]
-                partial.failed = [transactionFailure(
-                    attempts == 1 ? "b" : "c",
-                    "move refused")]
-                return partial
-            }
-            return BarArranger.Outcome()
-        },
-        beforeRetry: { resets += 1 })
-
-    #expect(attempts == 3)
-    #expect(resets == 2)
-    #expect(outcome.isClean)
-}
-
-@Test @MainActor func anEnvironmentalArrangeFailureIsNotRepeated() {
-    var attempts = 0
-    var resets = 0
-    let outcome = HideController.executeArrangementWithTransientRetry(
-        perform: {
-            attempts += 1
-            var failed = BarArranger.Outcome()
-            failed.failed = [transactionFailure(nil, "Accessibility unavailable")]
-            return failed
-        },
-        beforeRetry: { resets += 1 })
-
-    #expect(attempts == 1)
-    #expect(resets == 0)
-    #expect(!outcome.isClean)
-}
-
-@Test func backgroundArrangementNeverGetsPointerAuthority() {
-    #expect(HideController.ArrangementIntent.assistedUserAction.allowsPointerControl)
-    #expect(!HideController.ArrangementIntent.manualUserAction.allowsPointerControl)
-    #expect(!HideController.ArrangementIntent.savedLayoutRepair.allowsPointerControl)
-    #expect(!HideController.ArrangementIntent.background.allowsPointerControl)
-}
-
 @Test func launchRepairsSavedLayoutWhenTheReadOnlyProofFails() throws {
     let root = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
@@ -263,36 +137,6 @@ import Testing
     let launchPath = source[launchStart.lowerBound..<launchEnd.lowerBound]
 
     #expect(launchPath.contains("restoreSavedLayout"))
-}
-
-@Test @MainActor func launchRestoreClearsATransientFalseNegativeWithoutMovingAnything() {
-    var attempts = 0
-    var waits = 0
-    let restored = HideController.executeSafeRestoreChecks(
-        perform: {
-            attempts += 1
-            return attempts == 2
-        },
-        beforeRetry: { waits += 1 })
-
-    #expect(restored)
-    #expect(attempts == 2)
-    #expect(waits == 1)
-}
-
-@Test @MainActor func launchRestoreEscalatesAfterPersistentPhysicalDrift() {
-    var attempts = 0
-    var waits = 0
-    let restored = HideController.executeSafeRestoreChecks(
-        perform: {
-            attempts += 1
-            return false
-        },
-        beforeRetry: { waits += 1 })
-
-    #expect(!restored)
-    #expect(attempts == 2)
-    #expect(waits == 1)
 }
 
 @Test func appLifecycleReconcilesLateMenuItemsAgainstTheSavedLayout() throws {
@@ -309,90 +153,7 @@ import Testing
     #expect(source.contains("for delay in [500, 1_000]"))
 }
 
-@Test func sentinelOnlyTuckedAppDoesNotActivateTheBoundary() {
-    var config = Config.default
-    config.setZone(.tucked, forBundleID: "com.amazon.kiro.crew")
-    let own = BarItemOwners.Owner(name: "Stow", bundleID: "dev.starkpat.stow",
-                                  pid: 1, axLeftEdge: 900)
-    let sentinel = BarItemOwners.Owner(name: "Kiro Crew",
-                                      bundleID: "com.amazon.kiro.crew",
-                                      pid: 2, axLeftEdge: -1)
-
-    #expect(HideController.liveTuckedAvailability(
-        config: config,
-        identities: [own, sentinel],
-        windows: [],
-        accessibilityTrusted: true,
-        ownBundle: "dev.starkpat.stow") == .noneAvailable)
-}
-
-@Test func configuredAppWithoutAStatusItemDoesNotActivateTheBoundary() {
-    var config = Config.default
-    config.setZone(.tucked, forBundleID: "com.cindori.Backdrop.Wallpaper")
-    let own = BarItemOwners.Owner(name: "Stow", bundleID: "dev.starkpat.stow",
-                                  pid: 1, axLeftEdge: 900)
-
-    #expect(HideController.liveTuckedAvailability(
-        config: config,
-        identities: [own],
-        windows: [],
-        accessibilityTrusted: true,
-        ownBundle: "dev.starkpat.stow") == .noneAvailable)
-}
-
-@Test func visibleTuckedItemActivatesTheBoundary() {
-    var config = Config.default
-    config.setZone(.tucked, forBundleID: "com.example.visible")
-    let visible = BarItemOwners.Owner(name: "Visible", bundleID: "com.example.visible",
-                                     pid: 2, axLeftEdge: 1200)
-
-    #expect(HideController.liveTuckedAvailability(
-        config: config,
-        identities: [visible],
-        windows: [],
-        accessibilityTrusted: true,
-        ownBundle: "dev.starkpat.stow") == .available(["com.example.visible"]))
-}
-
-@Test func pushedTuckedItemNeedsItsRealWindowToActivateTheBoundary() {
-    var config = Config.default
-    config.setZone(.tucked, forBundleID: "com.example.hidden")
-    let own = BarItemOwners.Owner(name: "Stow", bundleID: "dev.starkpat.stow",
-                                  pid: 1, axLeftEdge: 900)
-    let pushed = BarItemOwners.Owner(name: "Hidden", bundleID: "com.example.hidden",
-                                    pid: 2, axLeftEdge: -3993)
-    let window = ObservedItem(windowNumber: 81, ownerPID: 1, bundleID: nil,
-                              ownerName: "Control Center",
-                              frame: CGRect(x: -3991, y: 0, width: 36, height: 24),
-                              isOnScreen: false)
-
-    #expect(HideController.liveTuckedAvailability(
-        config: config,
-        identities: [own, pushed],
-        windows: [window],
-        accessibilityTrusted: true,
-        ownBundle: "dev.starkpat.stow") == .available(["com.example.hidden"]))
-    #expect(HideController.liveTuckedAvailability(
-        config: config,
-        identities: [own, pushed],
-        windows: [],
-        accessibilityTrusted: true,
-        ownBundle: "dev.starkpat.stow") == .noneAvailable)
-}
-
-@Test func missingAccessibilityEvidenceIsNotTreatedAsNoLiveItems() {
-    var config = Config.default
-    config.setZone(.tucked, forBundleID: "com.example.hidden")
-
-    #expect(HideController.liveTuckedAvailability(
-        config: config,
-        identities: [],
-        windows: [],
-        accessibilityTrusted: false,
-        ownBundle: "dev.starkpat.stow") == .unknown)
-}
-
-@Test func missingPinnedItemsDoNotBecomeArrangementFailures() throws {
+@Test func thePanelReportsNoticesNotArrangementFailures() throws {
     let root = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
         .deletingLastPathComponent()
@@ -402,7 +163,8 @@ import Testing
     let mainWindow = try String(contentsOf: root.appending(path: "Sources/Stow/MainWindow.swift"),
                                 encoding: .utf8)
 
-    #expect(app.contains("arrangementFailures: hider.lastArrangeFailures,"))
+    #expect(app.contains("noticeCount: hider.notices.count,"))
+    #expect(!app.contains("arrangementFailures"))
     #expect(!app.contains("pinnedAvailabilityFailures"))
     #expect(!mainWindow.contains("pinnedAvailabilityFailures"))
 }
@@ -417,96 +179,9 @@ import Testing
 
     #expect(source.contains("private struct LiveStatusPanel: View"))
     #expect(source.contains("@EnvironmentObject private var hider: HideController"))
-    #expect(source.contains("arrangementFailures: hider.lastArrangeFailures"))
+    #expect(source.contains("noticeCount: hider.notices.count"))
     #expect(source.contains("presentation: hider.presentation"))
     #expect(source.contains(".environmentObject(hider)"))
-}
-
-private func transactionMove(_ bundleID: String, window: UInt32) -> BarArranger.TransactionMove {
-    BarArranger.TransactionMove(
-        bundleID: bundleID,
-        windowID: window,
-        hostPID: 1,
-        wantsRight: false)
-}
-
-private func transactionFailure(_ bundleID: String?, _ reason: String)
-    -> BarArranger.Outcome.Failure {
-    .init(bundleID: bundleID, reason: reason, recovery: "Recover.")
-}
-
-@Test @MainActor func aSuccessfulPassMovesEverythingAndVerifiesOnce() {
-    var events: [String] = []
-    let outcome = BarArranger.executePass(
-        moves: [transactionMove("a", window: 1), transactionMove("b", window: 2)],
-        perform: { move, _ in
-            events.append("apply-\(move.bundleID)")
-            return nil
-        },
-        verify: {
-            events.append("verify")
-            return []
-        })
-
-    #expect(outcome.moved == ["a", "b"])
-    #expect(outcome.failed.isEmpty)
-    #expect(events == ["apply-a", "apply-b", "verify"])
-}
-
-@Test @MainActor func aPartialMoveFailureKeepsVerifiedProgressForTheFreshRetry() {
-    var events: [String] = []
-    let outcome = BarArranger.executePass(
-        moves: [transactionMove("a", window: 1), transactionMove("b", window: 2)],
-        perform: { move, _ in
-            events.append("apply-\(move.bundleID)")
-            if move.bundleID == "b" {
-                return transactionFailure("b", "move refused")
-            }
-            return nil
-        },
-        verify: {
-            Issue.record("verification must not run after a move failure")
-            return []
-        })
-
-    #expect(outcome.moved == ["a"])
-    #expect(outcome.failed.first?.bundleID == "b")
-    #expect(events == ["apply-a", "apply-b"])
-}
-
-@Test @MainActor func verificationFailureKeepsCompletedMovesForTheFreshRetry() {
-    var events: [String] = []
-    let outcome = BarArranger.executePass(
-        moves: [transactionMove("a", window: 1), transactionMove("b", window: 2)],
-        perform: { move, _ in
-            events.append("apply-\(move.bundleID)")
-            return nil
-        },
-        verify: {
-            events.append("verify")
-            return [transactionFailure("b", "window disappeared")]
-        })
-
-    #expect(outcome.moved == ["a", "b"])
-    #expect(events == ["apply-a", "apply-b", "verify"])
-}
-
-@Test @MainActor func preflightFailureMakesNoMoveAndDoesNotVerify() {
-    var touched = false
-    let outcome = BarArranger.executePass(
-        moves: [transactionMove("a", window: 1)],
-        initialFailures: [transactionFailure(nil, "unknown hidden item")],
-        perform: { _, _ in
-            touched = true
-            return nil
-        },
-        verify: {
-            touched = true
-            return []
-        })
-
-    #expect(!touched)
-    #expect(outcome.failed.count == 1)
 }
 
 @Test func loadingLegacyZonesRewritesTheFileAndPreservesUnknownFields() throws {

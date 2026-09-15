@@ -105,8 +105,8 @@ final class ProfileHotKeys {
         guard let action = actions[id] else { return }
         Task { @MainActor in
             // Carbon reports the hotkey while Command and Shift are still physically down.
-            // ItemMover intentionally refuses synthetic drags with modifiers held, so wait for
-            // the matching key-up before applying the profile rather than weakening that guard.
+            // Applying a profile resizes Stow's own status item while the user may still be
+            // mid-chord; waiting for the key-up keeps that resize from landing under a held ⌘.
             for _ in 0..<20 {
                 if NSEvent.modifierFlags
                     .intersection(.deviceIndependentFlagsMask).isEmpty { break }

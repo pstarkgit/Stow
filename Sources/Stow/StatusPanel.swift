@@ -100,8 +100,8 @@ struct StatusPanel: View {
     /// reach by clicking them, and on a crowded bar there were seventeen of them needing no
     /// action at all.
     let hiddenApps: [HiddenApp]
-    /// Failures from the latest manual or launch arrangement.
-    let arrangementFailures: [BarArranger.Outcome.Failure]
+    /// Things Stow noticed about the bar but will not act on. Shown as a count that opens Arrange.
+    var noticeCount = 0
 
     /// Shows or hides every configured app in one action.
     var onTuckAllButPinned: () -> Void = {}
@@ -135,8 +135,8 @@ struct StatusPanel: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             if !profiles.isEmpty { profileSwitcher }
-            if !arrangementFailures.isEmpty {
-                failureBanner
+            if noticeCount > 0 {
+                noticeRow
             }
             visibleSection
             actionsSection
@@ -145,24 +145,27 @@ struct StatusPanel: View {
         .background(auroraCanvas)
     }
 
-    private var failureBanner: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Label(arrangementFailures.count == 1
-                  ? "Stow could not finish the arrangement"
-                  : "Stow could not finish \(arrangementFailures.count) changes",
-                  systemImage: "exclamationmark.triangle.fill")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(StowTheme.orange)
-            ForEach(Array(arrangementFailures.enumerated()), id: \.offset) { _, failure in
-                Text(failure.userMessage(displayName: Self.displayName))
-                    .font(.system(size: 10.5))
+    /// One quiet line, not a banner: Stow is not reporting a failure, it is asking for a decision.
+    private var noticeRow: some View {
+        Button(action: onArrange) {
+            HStack(spacing: 8) {
+                Image(systemName: "hand.point.up.left.fill")
+                    .foregroundStyle(StowTheme.orange)
+                Text(noticeCount == 1
+                     ? "1 item on your bar needs a decision"
+                     : "\(noticeCount) items on your bar need a decision")
+                    .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(StowTheme.inkSoft)
-                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                Text("Arrange")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(StowTheme.orange)
             }
         }
+        .buttonStyle(.plain)
         .padding(.horizontal, 14)
-        .padding(.vertical, 9)
-        .background(StowTheme.orange.opacity(0.10))
+        .padding(.vertical, 8)
+        .background(StowTheme.orange.opacity(0.08))
     }
 
     private static func displayName(_ bundleID: String) -> String {
@@ -315,7 +318,7 @@ struct StatusPanel: View {
         if hiddenApps.isEmpty { return "Add Apps" }
         switch presentation {
         case .tidy: return "Show All"
-        case .revealed: return "Hide Again"
+        case .revealed: return "Hide"
         case .everything: return "Hide \(hiddenApps.count)"
         }
     }
@@ -441,8 +444,7 @@ extension StatusPanel {
                           icon: nil, zone: .tucked, pid: 3),
                 HiddenApp(bundleID: "com.example.utility", name: "Utility",
                           icon: nil, zone: .tucked, pid: 4),
-            ],
-            arrangementFailures: [])
+            ])
     }
 }
 
@@ -499,22 +501,19 @@ extension StatusPanel {
         let sixAppPanel = StatusPanel(
             state: .tidy,
             hiddenApps: configuredApps.isEmpty ? fallbackApps : Array(configuredApps.prefix(6)),
-            arrangementFailures: [],
             presentation: .tidy)
 
         // Three real configurations, because the panel's height is dominated by how much is
         // hidden and whether an update is pending, not by its chrome alone.
         measure("nothing hidden            ",
                 StatusPanel(state: .tidy,
-                            hiddenApps: [],
-                            arrangementFailures: []))
+                            hiddenApps: []))
         measure("one app tucked            ",
                 StatusPanel(state: .tidy,
                             hiddenApps: [
                                 HiddenApp(bundleID: "com.microsoft.Outlook", name: "Outlook",
                                           icon: nil, zone: .tucked, pid: 1),
-                            ],
-                            arrangementFailures: []))
+                            ]))
         measure("three apps hidden         ", sample())
         measure("six apps hidden           ", sixAppPanel)
         measure("three hidden + update     ", {

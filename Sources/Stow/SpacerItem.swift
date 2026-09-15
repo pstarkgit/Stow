@@ -755,10 +755,9 @@ enum VisibleRowIdentity {
     /// Whether Stow's zoning key, the bundle identifier, cannot single out this item
     /// among its siblings, which is the only honest reason to exclude it from zoning.
     ///
-    /// NOT the same question as `isApple`. A live test synthesised the same
-    /// command-drag `ItemMover` uses against the Apple-owned Kerberos extra and it
-    /// MOVED, from x1153 to x1228, so "Apple item" was never a reason a move fails and
-    /// the blanket exclusion predates `ItemMover` having been proven against one.
+    /// NOT the same question as `isApple`. The Apple-owned Kerberos extra can be dragged
+    /// across the boundary like any third-party item (measured moving x1153 to x1228), so
+    /// "Apple item" was never a reason to exclude one.
     ///
     /// Control Center is different in KIND, not degree. The accessibility walk in
     /// `BarItemOwners.claims()` found six visible items, Clock, Control Center, Sound,

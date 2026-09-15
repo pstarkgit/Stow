@@ -13,6 +13,22 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.39
+
+- Stow no longer moves any app's menu-bar icon and never touches the pointer. Which icons are
+  stowed is decided by a real Command-drag in the real menu bar, remembered by macOS itself.
+- Arrange is now a live mirror of your menu bar with the Stow marker drawn in it, showing which
+  side each icon is on. There is nothing to apply.
+- Drift is reported, not fixed: a stowed app that came back to the visible side, an app that
+  slipped into Stow, or a newly installed app becomes a notice with a Keep choice.
+- Clicking a stowed app briefly shows the stowed run, opens that app's menu where it is, and
+  hides the run again. Menus no longer open at the screen's edge and nothing can fail to be
+  put back.
+- Profiles are now boundary widths. Switching one is instant, cannot be refused, and is safe
+  for automatic rules to apply.
+- Removed the synthetic Command-drag mover, the arrangement transaction engine, the
+  "could not be moved" banners, and the `--move` diagnostic.
+
 ## 0.1.38
 
 - Saved apps that are not currently publishing a menu-bar item no longer count as hidden,
