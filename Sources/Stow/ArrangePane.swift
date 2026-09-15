@@ -176,14 +176,14 @@ struct ArrangeContentView: View {
                     .padding(.vertical, 12)
             } else {
                 VStack(spacing: 12) {
-                    zoneRow(title: "IN STOW",
-                            detail: "left of Stow's marker",
-                            entries: hidden,
-                            selectable: false)
                     zoneRow(title: "ON BAR",
                             detail: "right of Stow's marker · click an app to add it to Stow",
                             entries: visible,
                             selectable: true)
+                    zoneRow(title: "IN STOW",
+                            detail: "left of Stow's marker",
+                            entries: hidden,
+                            selectable: false)
                 }
             }
         }
@@ -431,7 +431,7 @@ private struct MirrorTile: View {
                         .background(Circle().fill(StowTheme.canvas))
                         .offset(x: 5, y: -5)
                 } else if isPlannedForStow {
-                    Image(systemName: "arrow.left.circle.fill")
+                    Image(systemName: "arrow.down.circle.fill")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(StowTheme.orange)
                         .background(Circle().fill(StowTheme.canvas))

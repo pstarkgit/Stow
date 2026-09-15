@@ -13,6 +13,11 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.44
+
+- Arrange now reads top-to-bottom: **On Bar** is the source row and **In Stow** is directly
+  below it. Selected apps use a downward arrow to make the destination unambiguous.
+
 ## 0.1.43
 
 - Arrange now shows two responsive, no-scroll rows: **In Stow** and **On Bar**. The app list
