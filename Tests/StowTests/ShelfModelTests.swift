@@ -179,7 +179,7 @@ private func window(_ id: CGWindowID, x: CGFloat, width: CGFloat = 36) -> Observ
 
 // MARK: - the source no longer knows how to drag
 
-@Test func noSourceFileSynthesisesAMouseEvent() throws {
+@Test func syntheticPointerControlIsConfinedToConfirmedArrangement() throws {
     let sources = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .appending(path: "Sources/Stow")
@@ -187,10 +187,22 @@ private func window(_ id: CGWindowID, x: CGFloat, width: CGFloat = 36) -> Observ
         .filter { $0.pathExtension == "swift" }
     for file in files {
         let text = try String(contentsOf: file, encoding: .utf8)
-        #expect(!text.contains("CGEvent(mouseEventSource"), "\(file.lastPathComponent) synthesises a mouse event")
-        #expect(!text.contains("CGWarpMouseCursorPosition"), "\(file.lastPathComponent) moves the cursor")
-        #expect(!text.contains("CGDisplayHideCursor"), "\(file.lastPathComponent) hides the cursor")
+        guard file.lastPathComponent == "ItemMover.swift" else {
+            #expect(!text.contains("CGEvent(mouseEventSource"), "\(file.lastPathComponent) synthesises a mouse event")
+            #expect(!text.contains("CGWarpMouseCursorPosition"), "\(file.lastPathComponent) moves the cursor")
+            #expect(!text.contains("CGDisplayHideCursor"), "\(file.lastPathComponent) hides the cursor")
+            continue
+        }
+        #expect(text.contains("guard NSEvent.modifierFlags"), "the mover refuses during a user gesture")
+        #expect(text.contains("defer"), "the mover restores the pointer on every exit path")
     }
+
+    let pane = sources.appending(path: "ArrangePane.swift")
+    let arrange = try String(contentsOf: pane, encoding: .utf8)
+    #expect(arrange.contains("Stow selected apps?"))
+    #expect(arrange.contains("showArrangeConfirmation"))
+    #expect(arrange.contains("BarArranger.arrange"))
+    #expect(arrange.contains("hider.showEverything()"), "an incomplete arrangement fails open")
 }
 
 
@@ -206,8 +218,9 @@ private func window(_ id: CGWindowID, x: CGFloat, width: CGFloat = 36) -> Observ
     #expect(source.contains("plannedStowBundleIDs"),
             "Arrange keeps an explicit user-chosen Stow setup list separate from current placement")
     #expect(source.contains("TO STOW"))
-    #expect(source.contains("1 Pick here  ·  2 Drag in the actual menu bar  ·  3 Refresh Bar to check."))
-    #expect(source.contains("Picking never moves an icon."))
+    #expect(source.contains("Stow selected apps?"))
+    #expect(source.contains("Stow Selected"))
+    #expect(source.contains("Stow will briefly control the pointer only in step 2."))
     #expect(!source.contains("while !Task.isCancelled"),
             "Arrange must not replace its tiles on a timer while the user is interacting")
     #expect(!source.contains("Task.sleep(for: .seconds(1))"))

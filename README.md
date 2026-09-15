@@ -74,9 +74,13 @@ macOS has no public API for hiding another application's status item, and no
 public API for moving one. Stow does neither. It owns one narrow status item, the
 boundary, and widens it to push everything to its left off the bar.
 
-Which icons sit left of the boundary is your decision, made once with a real
-Command-drag in the real menu bar. macOS honours the drag and remembers every
-item's position across restarts, so Stow has nothing to re-arrange at launch.
+Which icons sit left of the boundary is normally your decision, made once with a real
+Command-drag in the real menu bar. Arrange can also do that placement for the apps
+you explicitly select: after a confirmation it synthesizes those Command-drags,
+temporarily controls the pointer, verifies every result, and restores the pointer.
+macOS honours either placement and remembers every item's position across restarts.
+Stow never moves icons while opening, refreshing, hiding, applying profiles, or
+running rules.
 
 The Arrange window is a live mirror of your bar with the boundary drawn in it, so
 you can see what is stowed while you drag. It records where you put things and

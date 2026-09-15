@@ -13,6 +13,16 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.42
+
+- **Stow Selected** is an explicit, confirmed one-click arrange action. It performs the same
+  Command-drags you would, briefly hides and restores the pointer, verifies each selected app,
+  then hides the run.
+- Pointer movement is confined to that confirmed action. Opening Arrange, choosing tiles,
+  refreshing, profiles, rules, ordinary hide/show, and launch remain pointer-free.
+- A refused or incomplete arrangement fails open: Stow shows the entire bar and lists what
+  macOS did not place, rather than hiding a partial arrangement.
+
 ## 0.1.41
 
 - Arrange now separates what you **want** in Stow from what is physically there. Click a visible

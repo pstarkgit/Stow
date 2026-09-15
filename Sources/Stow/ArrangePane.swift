@@ -17,6 +17,10 @@ struct ArrangeContentView: View {
     /// Apps the user has explicitly picked for the next real Command-drag. This is deliberately
     /// separate from `liveEntries`: choosing an app must not pretend it has already moved.
     @State private var plannedStowBundleIDs: Set<String> = []
+    @State private var isArrangingSelectedApps = false
+    @State private var showArrangeConfirmation = false
+    @State private var arrangementResult: String?
+    @State private var arrangementFailures: [String] = []
     @State private var showSystemItems = false
 
     var body: some View {
@@ -43,6 +47,68 @@ struct ArrangeContentView: View {
             // anything is left of the marker.
             store.recordObservedZones(hider.observedZones)
             if !hider.hiddenBundleIDs.isEmpty { hider.hide() }
+        }
+        .alert("Stow selected apps?", isPresented: $showArrangeConfirmation) {
+            Button("Stow \(plannedVisibleEntries.count) Selected", role: .destructive) {
+                startSelectedArrangement()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Stow will temporarily hide and move your pointer while it performs the same ⌘-drags you would. It verifies every app afterward. If one fails, Stow shows everything rather than hiding a partial bar.")
+        }
+    }
+
+    private func startSelectedArrangement() {
+        guard !plannedVisibleEntries.isEmpty, !isArrangingSelectedApps else { return }
+        isArrangingSelectedApps = true
+        arrangementResult = nil
+        arrangementFailures = []
+
+        // Give SwiftUI one turn to paint the in-progress state before the bounded main-actor
+        // arrangement uses the run loop to wait for macOS's menu bar.
+        Task { @MainActor in
+            await Task.yield()
+            performSelectedArrangement()
+        }
+    }
+
+    private func performSelectedArrangement() {
+        let plan = plannedVisibleEntries
+        defer { isArrangingSelectedApps = false }
+        guard !plan.isEmpty else { return }
+
+        // The action is scoped to exactly the apps the user picked. Preserve the observed side of
+        // every other live item so the arranger treats it as already correct and never moves it.
+        var target = store.config
+        for entry in hider.liveEntries {
+            target.setZone(entry.isHidden ? .tucked : .pinned, forBundleID: entry.bundleID)
+        }
+        for entry in plan {
+            target.setZone(.tucked, forBundleID: entry.bundleID)
+        }
+
+        // The boundary must be rested while these items cross it. This does not move any app.
+        hider.showEverything()
+        let outcome = BarArranger.arrange(config: target, seamWindow: hider.tuckedSeamWindow)
+        BarArranger.log(outcome, context: "selected-stow requested=\(plan.map(\.bundleID).joined(separator: ","))")
+
+        if outcome.isClean {
+            _ = hider.refresh(config: target)
+            store.recordObservedZones(hider.observedZones)
+            plannedStowBundleIDs.subtract(hider.hiddenBundleIDs)
+            hider.hide()
+            arrangementResult = outcome.moved.isEmpty
+                ? "Those apps were already on Stow's side. The bar is now hidden."
+                : "Stowed \(outcome.moved.count) app\(outcome.moved.count == 1 ? "" : "s")."
+        } else {
+            // Fail open. macOS may have accepted some of the requested drags, but the entire bar
+            // remains visible so the user can see and correct every real position.
+            hider.showEverything()
+            _ = hider.refresh(config: store.config)
+            arrangementFailures = outcome.failed.map {
+                "\(Self.displayName(forBundleID: $0.bundleID ?? "Stow")): \($0.reason)"
+            }
+            arrangementResult = "Stow showed everything because the selected arrangement was incomplete."
         }
     }
 
@@ -72,13 +138,13 @@ struct ArrangeContentView: View {
             Text("Arrange")
                 .font(.system(size: 19, weight: .bold, design: .rounded))
                 .foregroundStyle(StowTheme.ink)
-            Text("Pick the apps you want in Stow, then hold ⌘ and drag only those real menu-bar icons left of Stow's marker.")
+            Text("Pick the apps you want in Stow, then choose Stow Selected. That confirmed action performs the same ⌘-drags you would.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(StowTheme.inkSoft)
-            Text("1 Pick here  ·  2 Drag in the actual menu bar  ·  3 Refresh Bar to check. Picking never moves an icon.")
+            Text("1 Pick here  ·  2 Stow Selected  ·  3 Stow verifies and hides. Stow will briefly control the pointer only in step 2.")
                 .font(.system(size: 10.5, weight: .medium))
                 .foregroundStyle(StowTheme.stops(for: .tidy).first ?? StowTheme.blue)
-            Text("The bar is fully shown while this window is open. Stow never moves an icon for you, so nothing can be refused or left half done.")
+            Text("The bar is fully shown while this window is open. Stow moves icons only after you choose Stow Selected and confirm; profiles, refresh, and ordinary hide/show never move them.")
                 .font(.system(size: 10.5))
                 .foregroundStyle(StowTheme.inkMuted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -176,6 +242,16 @@ struct ArrangeContentView: View {
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(StowTheme.inkSoft)
                 Spacer(minLength: 8)
+                if !plan.isEmpty {
+                    Button(isArrangingSelectedApps
+                           ? "Stowing…"
+                           : "Stow \(plan.count) Selected") {
+                        showArrangeConfirmation = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isArrangingSelectedApps)
+                    .help("Move only the selected apps across Stow's marker after a confirmation.")
+                }
                 Button("Refresh Bar", action: refreshBar)
                     .buttonStyle(.bordered)
                     .help("Read the current menu bar after you finish a drag. The mirror stays still until you choose this.")
@@ -193,7 +269,7 @@ struct ArrangeContentView: View {
                     Image(systemName: "command")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(StowTheme.orange)
-                    Text("Drag \(plan.map(\.name).joined(separator: ", ")) in the actual menu bar, left of Stow's marker. Then choose Refresh Bar.")
+                    Text("Ready: \(plan.map(\.name).joined(separator: ", ")). Choose Stow \(plan.count) Selected, then confirm. Stow will verify every move and hide only if all selected apps land.")
                         .font(.system(size: 10.5))
                         .foregroundStyle(StowTheme.inkSoft)
                         .fixedSize(horizontal: false, vertical: true)
@@ -207,6 +283,23 @@ struct ArrangeContentView: View {
                     .font(.system(size: 10.5))
                     .foregroundStyle(StowTheme.inkMuted)
                     .padding(.leading, 22)
+            }
+            if let arrangementResult {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(arrangementResult,
+                          systemImage: arrangementFailures.isEmpty
+                              ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(arrangementFailures.isEmpty
+                                         ? (StowTheme.stops(for: .tidy).first ?? StowTheme.blue)
+                                         : StowTheme.orange)
+                    ForEach(arrangementFailures, id: \.self) { failure in
+                        Text(failure)
+                            .font(.system(size: 10))
+                            .foregroundStyle(StowTheme.inkSoft)
+                    }
+                }
+                .padding(.leading, 22)
             }
         }
         .padding(.horizontal, 4)
