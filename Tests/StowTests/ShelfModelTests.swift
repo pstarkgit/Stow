@@ -203,7 +203,11 @@ private func window(_ id: CGWindowID, x: CGFloat, width: CGFloat = 36) -> Observ
     let source = try String(contentsOf: pane, encoding: .utf8)
 
     #expect(source.contains("Button(\"Refresh Bar\", action: refreshBar)"))
-    #expect(source.contains(".task(id: screen?.displayID)"))
+    #expect(source.contains("plannedStowBundleIDs"),
+            "Arrange keeps an explicit user-chosen Stow setup list separate from current placement")
+    #expect(source.contains("TO STOW"))
+    #expect(source.contains("1 Pick here  ·  2 Drag in the actual menu bar  ·  3 Refresh Bar to check."))
+    #expect(source.contains("Picking never moves an icon."))
     #expect(!source.contains("while !Task.isCancelled"),
             "Arrange must not replace its tiles on a timer while the user is interacting")
     #expect(!source.contains("Task.sleep(for: .seconds(1))"))

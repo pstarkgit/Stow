@@ -14,6 +14,9 @@ struct ArrangeContentView: View {
     @EnvironmentObject private var store: Store
 
     @State private var owners: [BarItemOwners.Owner] = []
+    /// Apps the user has explicitly picked for the next real Command-drag. This is deliberately
+    /// separate from `liveEntries`: choosing an app must not pretend it has already moved.
+    @State private var plannedStowBundleIDs: Set<String> = []
     @State private var showSystemItems = false
 
     var body: some View {
@@ -46,6 +49,22 @@ struct ArrangeContentView: View {
     private func refreshBar() {
         _ = hider.refresh(config: store.config)
         owners = BarItemOwners.lastKnownClaims
+        // A checked-off plan becomes history only after the real bar confirms it crossed the
+        // marker. Until then the selected app remains in the user's short placement list.
+        plannedStowBundleIDs.subtract(hider.hiddenBundleIDs)
+    }
+
+    private func toggleStowPlan(for entry: HideController.LiveEntry) {
+        guard !entry.isHidden else { return }
+        if !plannedStowBundleIDs.insert(entry.bundleID).inserted {
+            plannedStowBundleIDs.remove(entry.bundleID)
+        }
+    }
+
+    private var plannedVisibleEntries: [HideController.LiveEntry] {
+        hider.liveEntries.filter {
+            !$0.isHidden && plannedStowBundleIDs.contains($0.bundleID)
+        }
     }
 
     private var header: some View {
@@ -53,9 +72,12 @@ struct ArrangeContentView: View {
             Text("Arrange")
                 .font(.system(size: 19, weight: .bold, design: .rounded))
                 .foregroundStyle(StowTheme.ink)
-            Text("Hold ⌘ and drag icons in your menu bar. Anything left of the Stow marker is stowed.")
+            Text("Pick the apps you want in Stow, then hold ⌘ and drag only those real menu-bar icons left of Stow's marker.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(StowTheme.inkSoft)
+            Text("1 Pick here  ·  2 Drag in the actual menu bar  ·  3 Refresh Bar to check. Picking never moves an icon.")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(StowTheme.stops(for: .tidy).first ?? StowTheme.blue)
             Text("The bar is fully shown while this window is open. Stow never moves an icon for you, so nothing can be refused or left half done.")
                 .font(.system(size: 10.5))
                 .foregroundStyle(StowTheme.inkMuted)
@@ -76,7 +98,7 @@ struct ArrangeContentView: View {
                     .font(.system(size: 10.5, weight: .bold))
                     .foregroundStyle(StowTheme.inkSoft)
                     .kerning(1.2)
-                Text("live · left to right")
+                Text("snapshot · left to right")
                     .font(.system(size: 10))
                     .foregroundStyle(StowTheme.inkMuted)
                 Spacer()
@@ -90,11 +112,21 @@ struct ArrangeContentView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(hidden, id: \.bundleID) { entry in
-                            MirrorTile(entry: entry, icon: icon(for: entry))
+                            MirrorTile(entry: entry, icon: icon(for: entry), isPlannedForStow: false)
                         }
                         marker
                         ForEach(visible, id: \.bundleID) { entry in
-                            MirrorTile(entry: entry, icon: icon(for: entry))
+                            Button {
+                                toggleStowPlan(for: entry)
+                            } label: {
+                                MirrorTile(entry: entry,
+                                           icon: icon(for: entry),
+                                           isPlannedForStow: plannedStowBundleIDs.contains(entry.bundleID))
+                            }
+                            .buttonStyle(.plain)
+                            .help(plannedStowBundleIDs.contains(entry.bundleID)
+                                  ? "Remove \(entry.name) from the Stow setup list"
+                                  : "Add \(entry.name) to the Stow setup list")
                         }
                     }
                     .padding(.vertical, 6)
@@ -132,24 +164,49 @@ struct ArrangeContentView: View {
     private var statusRow: some View {
         let hidden = hider.hiddenBundleIDs.count
         let visible = hider.visibleBundleIDs.count
-        return HStack(spacing: 9) {
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(StowTheme.stops(for: .tidy).first ?? StowTheme.blue)
-            Text(hidden == 0
-                 ? "Nothing is left of the marker yet. Drag an icon across it to stow it."
-                 : "\(hidden) in Stow · \(visible) on the bar. Saved by macOS; nothing to apply.")
-                .font(.system(size: 10.5))
-                .foregroundStyle(StowTheme.inkSoft)
-            Spacer(minLength: 8)
-            Button("Refresh Bar", action: refreshBar)
-                .buttonStyle(.bordered)
-                .help("Read the current menu bar after you finish a drag. The mirror stays still until you choose this.")
-            if hidden > 0 {
-                Button(hider.presentation == .tidy ? "Show All" : "Hide Now") {
-                    hider.toggle()
+        let plan = plannedVisibleEntries
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 9) {
+                Image(systemName: plan.isEmpty ? "hand.point.up.left.fill" : "list.bullet.circle.fill")
+                    .foregroundStyle(StowTheme.stops(for: .tidy).first ?? StowTheme.blue)
+                Text(plan.isEmpty
+                     ? "Step 1: click any app on the visible side to add it to your Stow list."
+                     : "Step 2: \(plan.count) app\(plan.count == 1 ? "" : "s") ready to stow.")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(StowTheme.inkSoft)
+                Spacer(minLength: 8)
+                Button("Refresh Bar", action: refreshBar)
+                    .buttonStyle(.bordered)
+                    .help("Read the current menu bar after you finish a drag. The mirror stays still until you choose this.")
+                if hidden > 0 {
+                    Button(hider.presentation == .tidy ? "Show All" : "Hide Now") {
+                        hider.toggle()
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Hide or show the stowed run. This only changes the width of Stow's boundary.")
                 }
-                .buttonStyle(.bordered)
-                .help("Hide or show the stowed run. This only changes the width of Stow's boundary.")
+            }
+
+            if !plan.isEmpty {
+                HStack(spacing: 7) {
+                    Image(systemName: "command")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(StowTheme.orange)
+                    Text("Drag \(plan.map(\.name).joined(separator: ", ")) in the actual menu bar, left of Stow's marker. Then choose Refresh Bar.")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(StowTheme.inkSoft)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button("Clear", role: .cancel) { plannedStowBundleIDs.removeAll() }
+                        .buttonStyle(.borderless)
+                }
+                .padding(.leading, 22)
+            } else if hidden > 0 {
+                Text("\(hidden) in Stow · \(visible) on the bar. Green checks mean the icon is already physically left of the marker.")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(StowTheme.inkMuted)
+                    .padding(.leading, 22)
             }
         }
         .padding(.horizontal, 4)
@@ -233,6 +290,7 @@ struct ArrangeContentView: View {
 private struct MirrorTile: View {
     let entry: HideController.LiveEntry
     let icon: NSImage?
+    let isPlannedForStow: Bool
 
     var body: some View {
         HStack(spacing: 7) {
@@ -253,12 +311,26 @@ private struct MirrorTile: View {
                         .foregroundStyle(StowTheme.stops(for: .tidy).first ?? StowTheme.blue)
                         .background(Circle().fill(StowTheme.canvas))
                         .offset(x: 5, y: -5)
+                } else if isPlannedForStow {
+                    Image(systemName: "arrow.left.circle.fill")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(StowTheme.orange)
+                        .background(Circle().fill(StowTheme.canvas))
+                        .offset(x: 5, y: -5)
                 }
             }
-            Text(entry.name)
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(StowTheme.ink)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(entry.name)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(StowTheme.ink)
+                    .lineLimit(1)
+                Text(entry.isHidden ? "IN STOW" : isPlannedForStow ? "TO STOW" : "ON BAR")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundStyle(entry.isHidden
+                                     ? (StowTheme.stops(for: .tidy).first ?? StowTheme.blue)
+                                     : isPlannedForStow ? StowTheme.orange : StowTheme.inkMuted)
+                    .kerning(0.4)
+            }
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 7)
@@ -267,9 +339,11 @@ private struct MirrorTile: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(entry.isHidden
                         ? (StowTheme.stops(for: .tidy).first ?? StowTheme.blue).opacity(0.45)
-                        : StowTheme.hairline,
-                        lineWidth: 1))
-        .help(entry.isHidden ? "\(entry.name) is in Stow" : "\(entry.name) stays on the bar")
+                        : isPlannedForStow ? StowTheme.orange.opacity(0.7) : StowTheme.hairline,
+                        lineWidth: isPlannedForStow ? 1.5 : 1))
+        .help(entry.isHidden
+              ? "\(entry.name) is already in Stow"
+              : isPlannedForStow ? "\(entry.name) is on your Stow setup list" : "Click to add \(entry.name) to your Stow setup list")
     }
 }
 
