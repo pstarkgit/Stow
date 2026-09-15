@@ -223,6 +223,10 @@ private func window(_ id: CGWindowID, x: CGFloat, width: CGFloat = 36) -> Observ
     #expect(source.contains("Stow will briefly control the pointer only in step 2."))
     #expect(source.contains("title: \"IN STOW\""))
     #expect(source.contains("title: \"ON BAR\""))
+    #expect(source.range(of: "title: \"ON BAR\"")!.lowerBound
+            < source.range(of: "title: \"IN STOW\"")!.lowerBound)
+    #expect(source.contains("arrow.down.circle.fill"))
+    #expect(!source.contains("arrow.left.circle.fill"))
     #expect(source.contains("LazyVGrid(columns:"))
     #expect(!source.contains("ScrollView(.horizontal, showsIndicators: false)"))
     #expect(!source.contains("while !Task.isCancelled"),
