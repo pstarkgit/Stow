@@ -175,13 +175,52 @@ struct ArrangeContentView: View {
                     .foregroundStyle(StowTheme.inkMuted)
                     .padding(.vertical, 12)
             } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(hidden, id: \.bundleID) { entry in
-                            MirrorTile(entry: entry, icon: icon(for: entry), isPlannedForStow: false)
-                        }
-                        marker
-                        ForEach(visible, id: \.bundleID) { entry in
+                VStack(spacing: 12) {
+                    zoneRow(title: "IN STOW",
+                            detail: "left of Stow's marker",
+                            entries: hidden,
+                            selectable: false)
+                    zoneRow(title: "ON BAR",
+                            detail: "right of Stow's marker · click an app to add it to Stow",
+                            entries: visible,
+                            selectable: true)
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(StowTheme.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .strokeBorder(StowTheme.hairline, lineWidth: 1))
+    }
+
+    private func zoneRow(title: String,
+                         detail: String,
+                         entries: [HideController.LiveEntry],
+                         selectable: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 7) {
+                Image(systemName: selectable ? "menubar.rectangle" : "tray.full.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(selectable ? StowTheme.inkSoft : (StowTheme.stops(for: .tidy).first ?? StowTheme.blue))
+                Text(title)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(StowTheme.inkSoft)
+                    .kerning(1)
+                Text("\(entries.count) · \(detail)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(StowTheme.inkMuted)
+            }
+            if entries.isEmpty {
+                Text(selectable ? "Nothing on the bar is available to add." : "Nothing is currently stowed.")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(StowTheme.inkMuted)
+                    .padding(.vertical, 4)
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 145, maximum: 220), spacing: 8)],
+                          alignment: .leading, spacing: 8) {
+                    ForEach(entries, id: \.bundleID) { entry in
+                        if selectable {
                             Button {
                                 toggleStowPlan(for: entry)
                             } label: {
@@ -193,32 +232,19 @@ struct ArrangeContentView: View {
                             .help(plannedStowBundleIDs.contains(entry.bundleID)
                                   ? "Remove \(entry.name) from the Stow setup list"
                                   : "Add \(entry.name) to the Stow setup list")
+                        } else {
+                            MirrorTile(entry: entry, icon: icon(for: entry), isPlannedForStow: false)
                         }
                     }
-                    .padding(.vertical, 6)
                 }
             }
         }
-        .padding(12)
+        .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(StowTheme.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+        .background(selectable ? Aurora.inset : (StowTheme.stops(for: .tidy).first ?? StowTheme.blue).opacity(0.05),
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
             .strokeBorder(StowTheme.hairline, lineWidth: 1))
-    }
-
-    private var marker: some View {
-        VStack(spacing: 4) {
-            Rectangle()
-                .fill(StowTheme.sweep(for: .tidy))
-                .frame(width: 3, height: 34)
-                .clipShape(Capsule())
-            Text("STOW")
-                .font(.system(size: 8, weight: .bold, design: .monospaced))
-                .foregroundStyle(StowTheme.stops(for: .tidy).first ?? StowTheme.blue)
-                .kerning(0.8)
-        }
-        .padding(.horizontal, 6)
-        .help("Stow's marker. Icons left of it are stowed; icons right of it stay on the bar.")
     }
 
     private func icon(for entry: HideController.LiveEntry) -> NSImage? {
