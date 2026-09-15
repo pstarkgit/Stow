@@ -13,6 +13,13 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.43
+
+- Arrange now shows two responsive, no-scroll rows: **In Stow** and **On Bar**. The app list
+  wraps to the available width instead of becoming one long menu-bar strip.
+- Only the On Bar row is clickable, preserving the selected-app setup flow; the In Stow row
+  remains an unambiguous readout of what is already hidden.
+
 ## 0.1.42
 
 - **Stow Selected** is an explicit, confirmed one-click arrange action. It performs the same

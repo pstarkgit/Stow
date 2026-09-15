@@ -221,6 +221,10 @@ private func window(_ id: CGWindowID, x: CGFloat, width: CGFloat = 36) -> Observ
     #expect(source.contains("Stow selected apps?"))
     #expect(source.contains("Stow Selected"))
     #expect(source.contains("Stow will briefly control the pointer only in step 2."))
+    #expect(source.contains("title: \"IN STOW\""))
+    #expect(source.contains("title: \"ON BAR\""))
+    #expect(source.contains("LazyVGrid(columns:"))
+    #expect(!source.contains("ScrollView(.horizontal, showsIndicators: false)"))
     #expect(!source.contains("while !Task.isCancelled"),
             "Arrange must not replace its tiles on a timer while the user is interacting")
     #expect(!source.contains("Task.sleep(for: .seconds(1))"))
