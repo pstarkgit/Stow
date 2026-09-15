@@ -13,6 +13,14 @@ Format:
 - Engineering detail belongs in the commit body, not here.
 ```
 
+## 0.1.41
+
+- Arrange now separates what you **want** in Stow from what is physically there. Click a visible
+  tile to make a short, orange **TO STOW** setup list, Command-drag only those real icons, then
+  choose Refresh Bar. A green **IN STOW** check remains proof that placement has happened.
+- Added explicit Pick, Drag, Refresh guidance and a named placement list, so the mirror is no
+  longer mistaken for the place where an icon is dragged.
+
 ## 0.1.40
 
 - Arrange now takes one stable snapshot when it opens instead of re-reading the bar every second.
